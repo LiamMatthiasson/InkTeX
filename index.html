@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=5">
 </head>
 <body>
   <!-- Top: pen hotbar. Each sample squiggle is drawn at that pen's real thickness and color. -->
@@ -64,8 +64,10 @@
     </div>
   </footer>
 
-  <!-- Scripts last, so the elements above already exist when they run -->
-  <script src="recognizer.js"></script>
-  <script src="app.js"></script>
+  <!-- Scripts last, so the elements above already exist when they run.
+       The ?v= number forces browsers (especially Safari on iPad) to fetch fresh copies:
+       bump it every time you push changes. -->
+  <script src="recognizer.js?v=5"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>

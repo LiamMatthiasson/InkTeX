@@ -4,13 +4,17 @@
 const canvas = document.getElementById('ink');
 const ctx = canvas.getContext('2d');
 const liveCanvas = document.getElementById('live');
-const liveCtx = liveCanvas.getContext('2d');
+const liveCtx = liveCanvas.getContext('2d', { desynchronized: true });   // low-latency hint (ignored where unsupported)
 
 const strokes = [];        // recognition data: each stroke is a list of { x, y, t, p }
 const inkStrokes = [];     // what's on the page: { points, pen, realPressure }, for redrawing
 let currentStroke = [];    // points of the stroke being drawn right now
 let currentRealPressure = false;   // true when drawing with an Apple Pencil
 let activePointer = null;  // id of the one pointer allowed to draw right now
+let activePointerType = null;   // 'pen', 'touch' or 'mouse'
+let canvasBox = null;      // the canvas's position on screen, measured on resize (not per sample)
+let lastLiveBox = null;    // the area the live stroke covered last frame, so only that gets cleared
+let predicted = [];        // where the browser guesses the pen is heading (drawn, never saved)
 let penSeen = false;       // once a Pencil is used, finger and palm touches are ignored
 
 // perfect-freehand turns points into a smooth, pressure-sensitive outline.
@@ -30,14 +34,15 @@ function resizeCanvases() {
     c.height = Math.round(box.height * dpr);
     context.setTransform(dpr, 0, 0, dpr, 0, 0);   // draw in normal page coordinates
   }
+  canvasBox = liveCanvas.getBoundingClientRect();
+  lastLiveBox = null;
   redrawAll();   // resizing a canvas wipes it, so paint the strokes back
 }
 
 // The pen position measured from the canvas's own corner, no matter what
 // element is under the pen (this is what fixes the lines from the corner).
 function pointFromEvent(e) {
-  const box = liveCanvas.getBoundingClientRect();
-  return { x: e.clientX - box.left, y: e.clientY - box.top, t: e.timeStamp, p: e.pressure };
+  return { x: e.clientX - canvasBox.left, y: e.clientY - canvasBox.top, t: e.timeStamp, p: e.pressure };
 }
 
 // Turn perfect-freehand's outline (a ring of points) into a smooth shape
@@ -66,7 +71,7 @@ function drawStroke(context, points, penName, realPressure, finished) {
       size: pen.size,
       thinning: pen.thinning,
       smoothing: 0.5,
-      streamline: 0.4,
+      streamline: 0.15,                  // low = the line stays right under the pen tip
       simulatePressure: !realPressure,   // mouse/finger: fake pressure from speed
       last: finished,                    // finished strokes get proper end caps
     });
@@ -93,9 +98,32 @@ function scheduleLiveDraw() {
   frameRequested = true;
   requestAnimationFrame(() => {
     frameRequested = false;
-    liveCtx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
-    drawStroke(liveCtx, currentStroke, currentPen, currentRealPressure, false);
+    clearLive();
+    if (activePointer === null) return;                 // the stroke ended before this frame
+    const points = currentStroke.concat(predicted);     // predicted points are only drawn, never saved
+    drawStroke(liveCtx, points, currentPen, currentRealPressure, false);
+    lastLiveBox = boundsOf(points, PENS[currentPen].size * 2);
   });
+}
+
+// Clear only the region the live stroke used last frame (much cheaper than the whole screen)
+function clearLive() {
+  if (lastLiveBox) {
+    liveCtx.clearRect(lastLiveBox.x, lastLiveBox.y, lastLiveBox.w, lastLiveBox.h);
+  } else {
+    liveCtx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
+  }
+  lastLiveBox = null;
+}
+
+// The rectangle around a list of points, padded so thick strokes fit inside
+function boundsOf(points, pad) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of points) {
+    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+  }
+  return { x: minX - pad, y: minY - pad, w: maxX - minX + 2 * pad, h: maxY - minY + 2 * pad };
 }
 
 window.addEventListener('resize', resizeCanvases);
@@ -106,9 +134,16 @@ resizeCanvases();
 liveCanvas.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'pen') penSeen = true;
   if (e.pointerType === 'touch' && penSeen) return;   // palm rejection
-  if (activePointer !== null) return;                 // someone is already drawing
+
+  if (activePointer !== null) {
+    // Something is already drawing. The Pencil always wins:
+    if (e.pointerType !== 'pen') return;              // a second finger: ignore it
+    if (activePointerType === 'pen') finishStroke(e.timeStamp);   // a pen-up we never got: keep that stroke
+    else abandonStroke();                             // a palm/finger got there first: drop it
+  }
 
   activePointer = e.pointerId;
+  activePointerType = e.pointerType;
   try {
     liveCanvas.setPointerCapture(e.pointerId);        // keep this pointer's events, even over the toolbar
   } catch (err) {
@@ -127,26 +162,46 @@ liveCanvas.addEventListener('pointermove', (e) => {
   let samples = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
   if (samples.length === 0) samples = [e];            // some browsers return an empty list
   for (const sample of samples) currentStroke.push(pointFromEvent(sample));
+
+  // Where the browser predicts the pen will be next (hides a little latency)
+  const guesses = e.getPredictedEvents ? e.getPredictedEvents() : [];
+  predicted = guesses.map(pointFromEvent);
   scheduleLiveDraw();
 });
 
-// The system can cancel a touch (e.g. it decided it was a palm): throw that stroke away
-liveCanvas.addEventListener('pointercancel', (e) => {
-  if (e.pointerId !== activePointer) return;
+// Drop the stroke in progress without saving it (a palm, or a canceled finger touch)
+function abandonStroke() {
   activePointer = null;
+  activePointerType = null;
   currentStroke = [];
-  liveCtx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
-});
+  predicted = [];
+  clearLive();
+}
 
 liveCanvas.addEventListener('pointerup', (e) => {
-    if (e.pointerId !== activePointer) return;
+  if (e.pointerId === activePointer) finishStroke(e.timeStamp);
+});
+
+// iPadOS can cancel a touch (e.g. it decided it was a palm). A canceled Pencil
+// stroke is still real writing, so keep it; a canceled finger touch is dropped.
+liveCanvas.addEventListener('pointercancel', (e) => {
+  if (e.pointerId !== activePointer) return;
+  if (activePointerType === 'pen') finishStroke(e.timeStamp);
+  else abandonStroke();
+});
+
+// Save the finished stroke and run recognition
+function finishStroke(timeStamp) {
+    if (activePointer === null) return;
     activePointer = null;
+    activePointerType = null;
+    predicted = [];
 
     // Move the finished stroke from the live layer to the page
     // (no extra point here: a lifting Pencil reports pressure 0, which would pinch the end)
     inkStrokes.push({ points: currentStroke, pen: currentPen, realPressure: currentRealPressure });
     drawStroke(ctx, currentStroke, currentPen, currentRealPressure, true);
-    liveCtx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
+    clearLive();
 
     strokes.push(currentStroke);
     
@@ -157,7 +212,7 @@ liveCanvas.addEventListener('pointerup', (e) => {
     // (the two lines of a "+", "=" or "4"). Otherwise it starts a new symbol.
     const last = symbols[symbols.length - 1];
     const quick = currentStroke[0].t - lastPenUp < GROUP_TIME_MS;
-    lastPenUp = e.timeStamp;
+    lastPenUp = timeStamp;
 
     let group;
     if (last && quick && overlapsX(last.strokes, [currentStroke])) {
@@ -174,7 +229,7 @@ liveCanvas.addEventListener('pointerup', (e) => {
     group.x = xRange(group.strokes).min;
     updateLatex();
     console.log(results);
-});
+}
 
 // ---------- Grouping helpers ----------
 const GROUP_TIME_MS = 1000;   // a stroke started within 1s of the previous one may join it
