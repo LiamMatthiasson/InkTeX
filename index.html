@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ink to LaTeX</title>
+
+  <!-- Font: Overpass, based on highway and drafting lettering -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;700&display=swap">
+
+  <!-- KaTeX: renders LaTeX on the page -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Top: pen hotbar. Each sample squiggle is drawn at that pen's real thickness and color. -->
+  <header id="hotbar" role="toolbar" aria-label="Choose a pen">
+    <button class="pen" data-pen="pencil" aria-pressed="false" title="Pencil (press 1)">
+      <svg viewBox="0 0 56 18" aria-hidden="true"><path d="M3 12 C 12 2, 20 16, 30 8 S 46 4, 53 9" stroke-width="1.75"/></svg>
+      <span class="pen-name">Pencil</span>
+      <kbd>1</kbd>
+    </button>
+    <button class="pen" data-pen="pen" aria-pressed="false" title="Pen (press 2)">
+      <svg viewBox="0 0 56 18" aria-hidden="true"><path d="M3 12 C 12 2, 20 16, 30 8 S 46 4, 53 9" stroke-width="3.5"/></svg>
+      <span class="pen-name">Pen</span>
+      <kbd>2</kbd>
+    </button>
+    <button class="pen" data-pen="marker" aria-pressed="false" title="Marker (press 3)">
+      <svg viewBox="0 0 56 18" aria-hidden="true"><path d="M3 12 C 12 2, 20 16, 30 8 S 46 4, 53 9" stroke-width="7"/></svg>
+      <span class="pen-name">Marker</span>
+      <kbd>3</kbd>
+    </button>
+  </header>
+
+  <!-- The whole screen is the grid-paper writing area -->
+  <canvas id="ink"></canvas>
+
+  <!-- LaTeX panel: hidden until you press "Show LaTeX". It floats on top of the paper. -->
+  <aside id="preview" hidden>
+    <div class="panel-head">
+      <h2>LaTeX</h2>
+      <button id="copy-latex" class="quiet">Copy</button>
+    </div>
+    <div id="latex">Write something on the paper.</div>
+    <pre id="latex-code"></pre>
+  </aside>
+
+  <!-- Bottom: teaching controls on the left, view and erase on the right -->
+  <footer id="toolbar">
+    <div class="group">
+      <input id="label" placeholder="Label as LaTeX, e.g. 2 or \alpha" autocomplete="off" aria-label="Label for this symbol">
+      <button id="save">Save</button>
+      <button id="undo" class="secondary">Undo</button>
+    </div>
+    <div id="status" aria-live="polite"></div>
+    <div class="group">
+      <button id="toggle-preview" class="secondary">Show LaTeX</button>
+      <button id="clear">Erase</button>
+    </div>
+  </footer>
+
+  <!-- Scripts last, so the elements above already exist when they run -->
+  <script src="recognizer.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

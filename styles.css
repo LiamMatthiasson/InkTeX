@@ -1,0 +1,312 @@
+/* =========================================================
+   Ink to LaTeX — engineering computation pad theme
+   ========================================================= */
+
+/* ---------- Colors and type in one place ---------- */
+:root {
+  --paper: #EEF2E6;        /* pale green engineering paper */
+  --grid: #DCE5D0;         /* fine grid, every 20px */
+  --grid-major: #C9D6BA;   /* heavier line, every 100px */
+  --sheet: #FAFBF6;        /* panel and bar surfaces */
+  --rule: #CBD5C0;         /* borders */
+  --text: #22302A;
+  --muted: #66746B;
+  --accent: #2F5D44;       /* deep green: Save, active pen */
+  --accent-dark: #244A36;
+  --accent-tint: #DDE8D3;
+  --danger: #9E3B3B;       /* brick red: Erase */
+  --danger-dark: #843030;
+  --ink: #1F3A68;          /* blue-black pen ink */
+  --lift: 0 1px 0 rgba(34, 48, 42, 0.06), 0 6px 18px rgba(34, 48, 42, 0.08);
+  --font: "Overpass", system-ui, -apple-system, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  overflow: hidden;                 /* the page is just the paper: no scrollbars */
+  background: var(--paper);
+  color: var(--text);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- The paper: canvas fills the screen, grid drawn with CSS ----------
+   The canvas itself stays transparent, so Erase (clearRect) never wipes the grid. */
+#ink {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  touch-action: none;               /* stops the iPad from scrolling while you draw */
+  cursor: crosshair;
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(var(--grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px),
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px;
+}
+
+/* ---------- Pen hotbar (top center) ---------- */
+#hotbar {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  padding: 5px;
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  box-shadow: var(--lift);
+}
+
+.pen {
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 8px;
+  padding: 7px 12px 6px;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  color: var(--text);
+  font: 600 0.8rem/1 var(--font);
+  cursor: pointer;
+  position: relative;
+}
+
+.pen svg {
+  grid-column: 1 / -1;
+  width: 56px;
+  height: 18px;
+  margin-bottom: 4px;
+  overflow: visible;
+}
+
+.pen svg path {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+}
+
+/* Each sample squiggle uses that pen's ink color */
+.pen[data-pen="pencil"] svg { color: #5A6472; }
+.pen[data-pen="pen"]    svg { color: var(--ink); }
+.pen[data-pen="marker"] svg { color: #1C2B22; }
+
+.pen-name { justify-self: start; }
+
+.pen kbd {
+  justify-self: end;
+  font: 600 0.68rem/1 var(--font);
+  color: var(--muted);
+  padding: 2px 5px 1px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+
+.pen:hover { background: #EEF2E6; }
+
+.pen[aria-pressed="true"] {
+  background: var(--accent-tint);
+}
+
+/* The chosen pen gets a green rule underneath, like an underlined answer */
+.pen[aria-pressed="true"]::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 1px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+/* ---------- LaTeX panel (floats over the right side) ---------- */
+#preview {
+  position: fixed;
+  top: 92px;                        /* below the hotbar */
+  right: 16px;
+  bottom: 84px;                     /* above the bottom toolbar */
+  width: min(440px, 44vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);   /* the pad's margin line */
+  border-radius: 6px;
+  box-shadow: var(--lift);
+  overflow: hidden;
+}
+
+#preview[hidden] { display: none; }
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.panel-head h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+#latex {
+  flex: 1;
+  overflow: auto;
+  padding: 24px 20px;
+  font-size: 1.5rem;
+  color: var(--ink);
+}
+
+#latex:not(:has(.katex)) {           /* the empty-state hint */
+  font-size: 1rem;
+  color: var(--muted);
+}
+
+#latex .katex-display { margin: 0; text-align: left; }
+
+#latex-code {
+  margin: 0;
+  padding: 12px 16px;
+  min-height: 44px;
+  background: #F1F4EC;
+  border-top: 1px solid var(--rule);
+  font: 0.85rem/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+#latex-code:empty::before {
+  content: "The LaTeX code appears here.";
+  font-family: var(--font);
+  color: var(--muted);
+}
+
+/* ---------- Bottom toolbar ---------- */
+#toolbar {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;   /* left group | status | right group */
+  gap: 12px;
+  pointer-events: none;             /* the empty middle doesn't block drawing... */
+}
+
+#toolbar .group,
+#toolbar #status {
+  pointer-events: auto;             /* ...but the controls still work */
+}
+
+#toolbar .group {
+  display: flex;
+  gap: 6px;
+  padding: 5px;
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  box-shadow: var(--lift);
+}
+
+#status {
+  font-size: 0.85rem;
+  color: var(--muted);
+  padding: 4px 10px;
+  background: rgba(238, 242, 230, 0.85);
+  border-radius: 6px;
+}
+
+#status:empty { display: none; }
+
+input {
+  width: 230px;
+  padding: 9px 11px 7px;
+  font: 400 0.95rem/1.2 var(--font);
+  color: var(--text);
+  background: #fff;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  outline: none;
+}
+
+input::placeholder { color: #8C978F; }
+
+input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(47, 93, 68, 0.15);
+}
+
+/* ---------- Buttons ---------- */
+button {
+  font: 600 0.92rem/1 var(--font);
+  cursor: pointer;
+}
+
+#toolbar button {
+  padding: 10px 16px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #fff;
+  transition: background-color 0.12s;
+}
+
+#toolbar button:active,
+.pen:active { transform: translateY(1px); }
+
+#save { background: var(--accent); }
+#save:hover { background: var(--accent-dark); }
+
+#clear { background: var(--danger); }
+#clear:hover { background: var(--danger-dark); }
+
+#toolbar button.secondary {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--rule);
+}
+#toolbar button.secondary:hover { background: #EEF2E6; }
+
+button.quiet {
+  padding: 5px 10px 3px;
+  font-size: 0.8rem;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+button.quiet:hover { background: var(--accent-tint); }
+
+/* Visible keyboard focus everywhere */
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+
+/* ---------- Narrow screens (iPad portrait, phones) ---------- */
+@media (max-width: 760px) {
+  #status { display: none; }
+  input { width: 140px; }
+  #toolbar .group { gap: 4px; }
+  #toolbar button { padding: 10px 12px 8px; }
+  #preview { width: auto; left: 16px; top: auto; height: 40vh; }
+  .pen { padding: 6px 9px 5px; }
+  .pen kbd { display: none; }
+}
