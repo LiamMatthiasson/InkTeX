@@ -23,11 +23,17 @@ final class NoteModel {
     private var allStrokes: [[Point]] = []   // everything drawn since the last Erase (used by Save)
     private var lastPenUp: TimeInterval = 0
 
+    // Results we've already worked out, so replaying the page (after undo, redo or
+    // erasing) doesn't re-recognize symbols that didn't change.
+    private var recognitionCache: [String: [Match]] = [:]
+
     var status = ""
 
-    // Grouping rule (same as the web version)
-    let groupTime: TimeInterval = 1.0   // a stroke started within 1 s of the last pen-up may join it
-    let groupMargin = 10.0              // points of slack when checking horizontal overlap
+    // Grouping rule: when does a new stroke belong to the symbol before it?
+    let groupTime: TimeInterval = 1.0   // it must start within 1 s of the last pen-up,
+    let minOverlap = 0.25               // overlap at least 25% of the narrower one's width,
+    let joinScoreLimit = 1.5            // and together they must look like a real symbol
+                                        // (best score below this; lower = closer match)
 
     /// The symbols sorted left to right, labels joined with spaces.
     var latex: String {
@@ -55,7 +61,9 @@ final class NoteModel {
         let quick = startTime - lastPenUp < groupTime
         lastPenUp = endTime
 
-        if let last = symbols.indices.last, quick, overlapsX(symbols[last].strokes, [points]) {
+        if let last = symbols.indices.last, quick,
+           overlapsX(symbols[last].strokes, [points]),
+           looksLikeOneSymbol(symbols[last].strokes + [points]) {
             symbols[last].strokes.append(points)          // same symbol: add this stroke
             relabel(last)
         } else {
@@ -66,10 +74,31 @@ final class NoteModel {
 
     /// (Re)recognize one symbol, so a "-" becomes a "+" once its second line arrives.
     private func relabel(_ index: Int) {
-        let results = recognize(symbols[index].strokes, templates: prepared)
-        symbols[index].label = results.first?.label ?? "?"
-        symbols[index].x = xRange(symbols[index].strokes).min
-        print(results.map { "\($0.label): \(String(format: "%.3f", $0.score))" })
+        let strokes = symbols[index].strokes
+        symbols[index].label = results(for: strokes).first?.label ?? "?"
+        symbols[index].x = xRange(strokes).min
+    }
+
+    /// Recognize some strokes, reusing the answer if we've seen these exact strokes before.
+    private func results(for strokes: [[Point]]) -> [Match] {
+        let key = cacheKey(strokes)
+        if let cached = recognitionCache[key] { return cached }
+
+        let fresh = recognize(strokes, templates: prepared)
+        if recognitionCache.count > 2000 { recognitionCache.removeAll() }   // keep it small
+        recognitionCache[key] = fresh
+        print(fresh.prefix(3).map { "\($0.label): \(String(format: "%.3f", $0.score))" })
+        return fresh
+    }
+
+    /// A short fingerprint of a symbol's strokes: where each stroke starts and ends,
+    /// rounded to whole points so tiny adjustments don't count as a different symbol.
+    private func cacheKey(_ strokes: [[Point]]) -> String {
+        strokes.map { stroke in
+            guard let first = stroke.first, let last = stroke.last else { return "-" }
+            return "\(Int(first.x.rounded())),\(Int(first.y.rounded()))>\(Int(last.x.rounded())),\(Int(last.y.rounded()))"
+        }
+        .joined(separator: ";")
     }
 
     /// Forget everything on the page (the canvas clears itself separately).
@@ -77,6 +106,16 @@ final class NoteModel {
         allStrokes = []
         symbols = []
         lastPenUp = 0
+    }
+
+    /// Undo/redo changed strokes that were already recognized. Rather than patching
+    /// things up, start over and replay every stroke on the page, in order, through the
+    /// same grouping and recognition as when they were first written.
+    func replaceStrokes(_ strokes: [StrokeInfo]) {
+        clearPage()
+        for stroke in strokes {
+            strokeFinished(stroke.points, startTime: stroke.start, endTime: stroke.end)
+        }
     }
 
     // MARK: - Grouping helpers
@@ -92,10 +131,22 @@ final class NoteModel {
         return (minX, maxX)
     }
 
+    /// Do two sets of strokes really overlap left to right? The shared stretch must be at
+    /// least `minOverlap` of the narrower one's width. (A thin vertical line counts as
+    /// about 6 points wide, so the upright of a "+" still overlaps its crossbar.)
     private func overlapsX(_ a: [[Point]], _ b: [[Point]]) -> Bool {
         let ra = xRange(a)
         let rb = xRange(b)
-        return rb.min <= ra.max + groupMargin && rb.max >= ra.min - groupMargin
+        let shared = min(ra.max, rb.max) - max(ra.min, rb.min)
+        let narrower = max(min(ra.max - ra.min, rb.max - rb.min), 6)
+        return shared >= minOverlap * narrower
+    }
+
+    /// Ask the recognizer: do these strokes, taken together, match some symbol well?
+    /// If not, they're probably neighbouring symbols that happen to overlap a little.
+    private func looksLikeOneSymbol(_ strokes: [[Point]]) -> Bool {
+        let best = results(for: strokes).first      // cached, so relabel won't redo this
+        return (best?.score ?? .infinity) < joinScoreLimit
     }
 
     // MARK: - Templates (teach mode)
@@ -110,6 +161,7 @@ final class NoteModel {
         let template = Template(label: label, strokes: allStrokes)
         templates.append(template)
         prepared.append(PreparedTemplate(template))   // normalized once, right now
+        recognitionCache.removeAll()                  // results may change with a new template
         persistTemplates()
         status = "Saved \"\(label)\" (\(templates.count) total)"
         return true
@@ -118,6 +170,7 @@ final class NoteModel {
     func undoTemplate() {
         guard let removed = templates.popLast() else { status = "No templates to undo"; return }
         prepared.removeLast()
+        recognitionCache.removeAll()
         persistTemplates()
         status = "Removed \"\(removed.label)\" (\(templates.count) total)"
     }

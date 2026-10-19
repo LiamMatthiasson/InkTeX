@@ -162,7 +162,11 @@ func normalize(_ points: [Point]) -> [Point] {
 // MARK: - Point-cloud matching
 
 /// Each dot in `a` claims the closest unclaimed dot in `b`. Early picks count more.
-func greedyMatch(_ a: [Point], _ b: [Point], start: Int) -> Double {
+///
+/// `limit` makes it fast: once the running total reaches the limit, this match can't
+/// win anymore, so it stops early ("early abandoning"). Most templates are rejected
+/// after a few dots instead of all 32.
+func greedyMatch(_ a: [Point], _ b: [Point], start: Int, limit: Double = .infinity) -> Double {
     let n = a.count
     var claimed = [Bool](repeating: false, count: n)
     var total = 0.0
@@ -181,19 +185,23 @@ func greedyMatch(_ a: [Point], _ b: [Point], start: Int) -> Double {
         claimed[closest] = true
         let weight = 1 - Double(k) / Double(n)
         total += weight * closestDist
+        if total >= limit { return total }       // already too far: give up on this one
     }
     return total
 }
 
 /// Tries several starting dots, in both directions, and keeps the best score.
-func cloudDistance(_ a: [Point], _ b: [Point]) -> Double {
+/// Each attempt only has to beat the best so far, so later attempts give up early.
+/// If nothing beats `limit`, the result is just "at least limit" (the caller ignores it).
+func cloudDistance(_ a: [Point], _ b: [Point], limit: Double = .infinity) -> Double {
     let n = a.count
     guard n > 0, b.count == n else { return .infinity }
 
     let step = max(1, Int(Double(n).squareRoot()))   // about 5 starting points for 32 dots
-    var best = Double.infinity
+    var best = limit
     for start in stride(from: 0, to: n, by: step) {
-        best = min(best, greedyMatch(a, b, start: start), greedyMatch(b, a, start: start))
+        best = min(best, greedyMatch(a, b, start: start, limit: best))
+        best = min(best, greedyMatch(b, a, start: start, limit: best))
     }
     return best
 }
@@ -209,7 +217,9 @@ func recognize(_ strokes: [[Point]], templates: [PreparedTemplate]) -> [Match] {
     var bestPerLabel: [String: Double] = [:]   // label -> its closest template's score
 
     for template in templates {
-        let score = cloudDistance(drawn, template.shape)
+        // Only this label's best so far matters: a template that can't beat it is skipped
+        // early. Each label still ends up with its exact best score (for the top-3 list).
+        let score = cloudDistance(drawn, template.shape, limit: bestPerLabel[template.label] ?? .infinity)
         if let best = bestPerLabel[template.label], best <= score { continue }
         bestPerLabel[template.label] = score
     }

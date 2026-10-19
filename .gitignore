@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# Xcode: personal settings (window layout, breakpoints) that differ per person
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# Xcode: build output (regenerated on every build)
+DerivedData/
+build/
+
+# Swift Package Manager caches
+.swiftpm/
+.build/

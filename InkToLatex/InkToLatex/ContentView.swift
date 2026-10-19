@@ -1,4 +1,4 @@
-// The screen: grid paper filling the whole display, the PencilKit canvas on top,
+// The screen: scrolling notebook pages with the PencilKit canvas on top,
 // the pen hotbar at the top, teach controls bottom left, LaTeX and Erase bottom right,
 // and the LaTeX panel floating over the right side. (The Swift version of index.html.)
 
@@ -7,18 +7,40 @@ import SwiftUI
 struct ContentView: View {
     @State private var model = NoteModel()
     @State private var pen: PenKind = .pen
+    @State private var widths: [PenKind: CGFloat] = [:]   // thickness chosen for each pen
     @State private var clearToken = 0      // bump to wipe the canvas
     @State private var label = ""
     @State private var showLatex = false
 
+    /// Size of the preview dot: the real width, scaled down for big erasers so it fits
+    private var preview: CGFloat {
+        pen == .eraser ? max(6, width.wrappedValue * 30 / 80) : width.wrappedValue
+    }
+
+    /// The current tool's size, for the slider (each tool remembers its own)
+    private var width: Binding<CGFloat> {
+        Binding(
+            get: { widths[pen] ?? pen.defaultWidth },
+            set: { widths[pen] = $0 }
+        )
+    }
+
     var body: some View {
         ZStack {
-            GridPaper()
-                .ignoresSafeArea()
-
-            InkCanvas(pen: pen, clearToken: clearToken) { points, start, end in
-                model.strokeFinished(points, startTime: start, endTime: end)
-            }
+            // Notebook pages + PencilKit. Scroll with two fingers (one with a mouse/finger
+            // when no Pencil is paired); pinch to zoom; two-finger double-tap = undo,
+            // three-finger double-tap = redo.
+            InkCanvas(
+                pen: pen,
+                width: width.wrappedValue,
+                clearToken: clearToken,
+                onStroke: { stroke in
+                    model.strokeFinished(stroke.points, startTime: stroke.start, endTime: stroke.end)
+                },
+                onStrokesReplaced: { strokes in
+                    model.replaceStrokes(strokes)
+                }
+            )
             .ignoresSafeArea()
 
             VStack {
@@ -53,9 +75,16 @@ struct ContentView: View {
                     pen = kind
                 } label: {
                     VStack(spacing: 4) {
-                        Squiggle()
-                            .stroke(kind.color, style: StrokeStyle(lineWidth: kind.sampleWidth, lineCap: .round))
-                            .frame(width: 56, height: 18)
+                        if kind == .eraser {
+                            Image(systemName: "eraser")
+                                .font(.system(size: 17, weight: .medium))
+                                .foregroundStyle(kind.color)
+                                .frame(width: 56, height: 18)
+                        } else {
+                            Squiggle()
+                                .stroke(kind.color, style: StrokeStyle(lineWidth: kind.sampleWidth, lineCap: .round))
+                                .frame(width: 56, height: 18)
+                        }
                         Text(kind.title)
                             .font(.footnote.weight(.semibold))
                             .foregroundStyle(Color.ink)
@@ -76,6 +105,29 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
             }
+
+            Divider()
+                .frame(height: 40)
+                .padding(.horizontal, 6)
+
+            // Size slider for the current tool, with a dot showing the size
+            HStack(spacing: 10) {
+                Slider(value: width, in: pen.widthRange)
+                    .frame(width: 130)
+                    .tint(Color.padGreen)
+                    .id(pen)                          // fresh slider per tool, since ranges differ
+                ZStack {
+                    if pen == .eraser {
+                        Circle().stroke(Color.muted, lineWidth: 1.5)       // eraser: an outline
+                            .frame(width: preview, height: preview)
+                    } else {
+                        Circle().fill(pen.color)
+                            .frame(width: preview, height: preview)
+                    }
+                }
+                .frame(width: 30, height: 30)       // fixed space so the bar doesn't jump around
+            }
+            .padding(.trailing, 8)
         }
         .floatingSheet(cornerRadius: 14)
     }
@@ -102,7 +154,8 @@ struct ContentView: View {
                 }
                 .buttonStyle(FilledButtonStyle(color: .padGreen))
 
-                Button("Undo") { model.undoTemplate() }
+                // Removes the last saved template (stroke undo is the two-finger double-tap)
+                Button("Undo Save") { model.undoTemplate() }
                     .buttonStyle(OutlineButtonStyle())
             }
             .floatingSheet()

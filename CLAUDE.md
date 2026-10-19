@@ -13,7 +13,7 @@ this partly to learn how it works.
 There are two versions:
 - **Web app** (repo root: `index.html`, `app.js`, `recognizer.js`, `styles.css`, `vendor/`),
   hosted on GitHub Pages: https://liammatthiasson.github.io/LaTex/
-- **Native iPad app** (in progress, `swift/`): SwiftUI + PencilKit. Liam moved to native
+- **Native iPad app** (in progress, `InkToLatex/`: open `InkToLatex.xcodeproj`; Swift sources in `InkToLatex/InkToLatex/`, which Xcode includes automatically): SwiftUI + PencilKit. Liam moved to native
   because pen feel in Safari hit the browser's limits (latency, batched pointer events).
   The web app stays live as a demo.
 
@@ -53,8 +53,8 @@ There are two versions:
   bead-by-bead matching ($1-style, `pathDistance`); replaced with point clouds because
   stroke order and direction differ between drawings of the same symbol (e.g. `+`).
 - **The recognizer stays pure**: no UI, storage or events (`recognizer.js`, and
-  `swift/Recognizer.swift`, a line-by-line port). Points in, ranked results out.
-  `swift/RecognizerChecks.swift` checks the Swift port against numbers produced by the
+  `InkToLatex/InkToLatex/Recognizer.swift`, a line-by-line port). Points in, ranked results out.
+  `RecognizerChecks.swift` checks the Swift port against numbers produced by the
   JavaScript version; keep the two in sync.
 - **Template labels are the LaTeX itself** (`2`, `+`, `\alpha`), so building the output is
   just sorting symbols left to right and joining labels with spaces.
@@ -65,20 +65,38 @@ There are two versions:
   compatible between the web and native apps.
 - **`recognize()` returns a ranked list, not just the winner.** The top 3 are meant for a
   future tap-to-correct menu.
-- **Grouping strokes into symbols**: a new stroke joins the previous symbol if it starts
-  within 1 s of the last pen-up AND overlaps it horizontally (10 pt slack). The group is
-  re-recognized each time it grows.
+- **Grouping strokes into symbols** (native app, `NoteModel`): a new stroke joins the
+  previous symbol only if it starts within 1 s of the last pen-up, genuinely overlaps it
+  horizontally (shared stretch >= 25% of the narrower width, thin strokes count as 6 pt),
+  AND the joined strokes match some template well (best score < 1.5): recognition-driven
+  grouping. The old rule (any overlap with 10 pt slack, still in the web app) chained fast
+  handwriting into one giant "symbol". Recognition results are cached per symbol, so
+  replays after undo/redo/erase are cheap.
+- **Speed**: `greedyMatch`/`cloudDistance` use early abandoning against each label's best
+  score so far; this keeps every label's best score exact (verified identical to the
+  original on 2,000 random shapes). Run the app in the Release configuration when judging
+  speed: Debug builds of this numeric code are far slower.
 - **Web drawing engine**: two stacked canvases, coordinates from `clientX/Y` minus the
   cached canvas box (not `offsetX`), pointer capture, `getCoalescedEvents`,
   `getPredictedEvents`, perfect-freehand (vendored, MIT), `streamline` 0.15. Pointer rules:
   the Pencil always wins over a palm/finger; a new Pencil stroke recovers from a missed
   pen-up; canceled Pencil strokes are kept, canceled finger strokes dropped.
-- **Native drawing**: PencilKit's `PKCanvasView` (`swift/InkCanvas.swift`) does ink,
+- **Native drawing**: PencilKit's `PKCanvasView` (`InkCanvas.swift`) does ink,
   pressure and palm rejection. `drawingPolicy = .default` follows the iPad's setting.
-  New strokes are detected in `canvasViewDrawingDidChange` by comparing stroke counts.
+  New strokes are detected in `canvasViewDrawingDidChange`: one stroke appended means
+  "recognize it"; anything else (undo, redo, eraser) means "replay every stroke"
+  (`NoteModel.replaceStrokes`). Strokes are compared by creation date and point count.
+  **Notebook pages** (`PageLayout`): US Letter-shaped pages (768 x 994 pt in page
+  coordinates) stacked vertically with 28 pt gaps; one blank page always follows the last
+  page with ink. `PageBackgroundView` (behind the transparent canvas) draws the desk,
+  pages and grid, redrawn to match the canvas's zoom and scroll. "Fit" zoom = page width
+  fills the screen; pinch zooms up to 4x from there.
+  Two-finger double-tap = undo, three-finger double-tap = redo (`NoteCanvasView`
+  turns off iPadOS's own three-finger edit gestures so they don't steal these).
+  Hotbar tools: Pencil, Pen, Marker, Eraser (bitmap eraser), each with its own size.
 - **Visual design**: an engineering computation pad (pale green grid paper), deep green
   accent, brick red for Erase. Pen hotbar at top (Pencil / Pen / Marker); Save and Undo
-  bottom left; Show LaTeX and Erase bottom right. Same in both apps (`swift/Theme.swift`
+  bottom left; Show LaTeX and Erase bottom right. Same in both apps (`Theme.swift`
   mirrors `styles.css`).
 - **Templates are per device.** Web: `localStorage`. Native: `templates.json` in the app's
   Documents folder. Real templates should be made on the iPad with the Pencil.
