@@ -59,7 +59,6 @@ function outlineToPath(outline) {
   return path;
 }
 
-// Draw one stroke onto a canvas
 function drawStroke(context, points, penName, realPressure, finished) {
   if (points.length === 0) return;
   const pen = PENS[penName];
@@ -219,7 +218,7 @@ function finishStroke(timeStamp) {
         last.strokes.push(currentStroke);              // same symbol: add this stroke to it
         group = last;
     } else {
-        group = { strokes: [currentStroke], label: '', x: 0 };   // a new symbol
+        group = { strokes: [currentStroke], label: '', x: 0 };
         symbols.push(group);
     }
 
@@ -236,7 +235,6 @@ const GROUP_TIME_MS = 1000;   // a stroke started within 1s of the previous one 
 const GROUP_MARGIN = 10;      // px of slack when checking overlap
 let lastPenUp = 0;
 
-// Leftmost and rightmost x across a list of strokes
 function xRange(strokeList) {
   let min = Infinity, max = -Infinity;
   for (const stroke of strokeList) {
@@ -280,17 +278,17 @@ showStatus();
 
 
 function clearDrawing() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);  // erase what you see
-    strokes.length = 0; 
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    strokes.length = 0;
     inkStrokes.length = 0;
     symbols.length = 0;
-    updateLatex();                               // forget what the program remembers
+    updateLatex();
 }
 
 document.getElementById('clear').addEventListener('click', clearDrawing);
 document.getElementById('save').addEventListener('click', () => {
     const label = labelBox.value.trim();               // the label is the LaTeX for this symbol
-    if (label === '' || strokes.length === 0) return;  
+    if (label === '' || strokes.length === 0) return;
 
     const newStrokes = [...strokes];                 // a copy, so Erase can't empty it
     templates.push({
@@ -305,9 +303,9 @@ document.getElementById('save').addEventListener('click', () => {
 });
 
 document.getElementById('undo').addEventListener('click', () => {
-  if (templates.length === 0) return;                           // nothing to undo
+  if (templates.length === 0) return;
 
-  const removed = templates.pop();                              // take off the last one
+  const removed = templates.pop();
   saveTemplates();
   statusBox.textContent = `Removed "${removed.label}" (${templates.length} total)`;
 });
@@ -335,7 +333,7 @@ const previewPanel = document.getElementById('preview');
 const toggleButton = document.getElementById('toggle-preview');
 
 toggleButton.addEventListener('click', () => {
-  previewPanel.hidden = !previewPanel.hidden;   // flip: shown <-> hidden
+  previewPanel.hidden = !previewPanel.hidden;
   toggleButton.textContent = previewPanel.hidden ? 'Show LaTeX' : 'Hide LaTeX';
 });
 
@@ -363,7 +361,7 @@ function selectPen(name) {
   document.querySelectorAll('.pen').forEach(button => {
     button.setAttribute('aria-pressed', button.dataset.pen === name);  // highlights the chosen one
   });
-  try { localStorage.setItem('pen', name); } catch (e) {}   // remember it for next time
+  try { localStorage.setItem('pen', name); } catch (e) {}
 }
 
 document.querySelectorAll('.pen').forEach(button => {

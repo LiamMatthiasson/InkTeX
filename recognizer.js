@@ -104,7 +104,7 @@ function scaleToUnit(points) {
 
   const width = maxX - minX;
   const height = maxY - minY;
-  const size = Math.max(width, height);   // the bigger side
+  const size = Math.max(width, height);
 
   if (size === 0) return points;          // a single dot: nothing to scale
 
