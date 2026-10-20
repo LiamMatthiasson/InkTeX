@@ -300,13 +300,13 @@ struct InkCanvas: UIViewRepresentable {
         // Two fingers, tapped twice: undo
         let undoTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.undo))
         undoTap.numberOfTouchesRequired = 2
-        undoTap.numberOfTapsRequired = 2
+        undoTap.numberOfTapsRequired = 1
         canvas.addGestureRecognizer(undoTap)
 
         // Three fingers, tapped twice: redo
         let redoTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.redo))
         redoTap.numberOfTouchesRequired = 3
-        redoTap.numberOfTapsRequired = 2
+        redoTap.numberOfTapsRequired = 1
         canvas.addGestureRecognizer(redoTap)
 
         context.coordinator.container = container

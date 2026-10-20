@@ -192,11 +192,11 @@ struct ContentView: View {
                     .foregroundStyle(Color.ink)
                 Spacer()
                 Button("Copy") {
-                    if model.latex.isEmpty {
+                    if model.lineLatex.isEmpty {
                         model.status = "Nothing to copy yet"
                     } else {
-                        UIPasteboard.general.string = model.latex
-                        model.status = "Copied LaTeX"
+                        UIPasteboard.general.string = model.document   // the whole .tex document
+                        model.status = "Copied the LaTeX document"
                     }
                 }
                 .buttonStyle(OutlineButtonStyle(compact: true))
@@ -206,19 +206,23 @@ struct ContentView: View {
 
             Divider()
 
-            LatexView(latex: model.latex)
+            LatexView(lines: model.lineLatex)
                 .frame(maxHeight: .infinity)
 
             Divider()
 
-            Text(model.latex.isEmpty ? "The LaTeX code appears here." : model.latex)
-                .font(.system(.callout, design: .monospaced))
-                .foregroundStyle(model.latex.isEmpty ? Color.muted : Color.ink)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(Color(hex: 0xF1F4EC))
+            // The full document's source (what Copy copies)
+            ScrollView {
+                Text(model.lineLatex.isEmpty ? "The LaTeX document appears here." : model.document)
+                    .font(.system(.callout, design: .monospaced))
+                    .foregroundStyle(model.lineLatex.isEmpty ? Color.muted : Color.ink)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+            }
+            .frame(maxHeight: 220)
+            .background(Color(hex: 0xF1F4EC))
         }
         .frame(width: 420)
         .background(Color.sheet)

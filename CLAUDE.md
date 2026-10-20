@@ -72,6 +72,13 @@ There are two versions:
   grouping. The old rule (any overlap with 10 pt slack, still in the web app) chained fast
   handwriting into one giant "symbol". Recognition results are cached per symbol, so
   replays after undo/redo/erase are cheap.
+- **Lines and the document** (`NoteModel.lines`, `lineLatex`, `document`): symbols are
+  sorted by vertical center; a symbol joins the current line if its center is inside the
+  line's vertical band (every line at least `minLineHeight` = 30 pt tall, so a line starting
+  with "-" still works); each line reads left to right. Page coordinates run continuously
+  across pages, so lines on page 2 follow page 1. The output is a complete document
+  (`\documentclass{article}` + amsmath/amssymb), one `\[ ... \]` display equation per
+  line. Copy copies the whole document; the panel renders each line with KaTeX.
 - **Speed**: `greedyMatch`/`cloudDistance` use early abandoning against each label's best
   score so far; this keeps every label's best score exact (verified identical to the
   original on 2,000 random shapes). Run the app in the Release configuration when judging
@@ -98,6 +105,15 @@ There are two versions:
   accent, brick red for Erase. Pen hotbar at top (Pencil / Pen / Marker); Save and Undo
   bottom left; Show LaTeX and Erase bottom right. Same in both apps (`Theme.swift`
   mirrors `styles.css`).
+- **Built-in starter templates**: `tools/convert.swift` (run on the Mac with
+  `cd tools && swift convert.swift`) reads the HWRT dataset in `tools/hwrt/` (gitignored,
+  ~1.3 GB; ODbL license, https://zenodo.org/records/50022) and writes
+  `InkToLatex/InkToLatex/StarterTemplates.json`: 10 samples (different writers) of each of
+  67 chosen symbols. HWRT's real columns are `symbol_id;user_id;data;user_agent`, data is
+  JSON, lines end in CRLF, and user_agent contains `;` (split with maxSplits: 3). Measured on
+  HWRT's test writers: 70% top-1, 88% top-3 (vs 64%/83% with 5 per symbol). Main confusions
+  are true look-alikes (9/g, x/\times, a/\alpha, 5/s). The app loads starters first, then the
+  user's own templates on top; only the user's are saved or undone.
 - **Templates are per device.** Web: `localStorage`. Native: `templates.json` in the app's
   Documents folder. Real templates should be made on the iPad with the Pencil.
 
@@ -108,7 +124,7 @@ There are two versions:
    between the web and native apps).
 3. **Tap-to-correct**: tap a symbol, pick from the top-3 guesses; save the corrected
    drawing as a new template so it learns from use.
-4. **Layout (2-D structure)**: superscripts, subscripts, fractions, square roots, using
+4. **Layout within a line**: superscripts, subscripts, fractions, square roots, using
    symbol size and position. The current grouping rule wrongly merges a fraction bar with
    its numerator, since they overlap horizontally.
 5. Later: a starter template set, teaching moved into a settings screen, `.tex` export,

@@ -1,11 +1,11 @@
-// Shows LaTeX as rendered math, using KaTeX (the same library as the web version)
-// inside a small embedded web view.
+// Shows the document's lines as rendered math, one display equation per line, using
+// KaTeX (the same library as the web version) inside a small embedded web view.
 
 import SwiftUI
 import WebKit
 
 struct LatexView: UIViewRepresentable {
-    var latex: String
+    var lines: [String]
 
     func makeUIView(context: Context) -> WKWebView {
         let webView = WKWebView()
@@ -17,21 +17,21 @@ struct LatexView: UIViewRepresentable {
 
     func updateUIView(_ webView: WKWebView, context: Context) {
         // Only reload when the LaTeX actually changed
-        guard context.coordinator.shown != latex else { return }
-        context.coordinator.shown = latex
-        webView.loadHTMLString(Self.page(for: latex), baseURL: nil)
+        guard context.coordinator.shown != lines else { return }
+        context.coordinator.shown = lines
+        webView.loadHTMLString(Self.page(for: lines), baseURL: nil)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     final class Coordinator {
-        var shown: String? = nil
+        var shown: [String]? = nil
     }
 
-    /// A tiny web page that renders the LaTeX with KaTeX.
-    static func page(for latex: String) -> String {
-        // Turn the LaTeX into a safe JavaScript string literal (handles quotes and backslashes)
-        let data = (try? JSONEncoder().encode(latex)) ?? Data("\"\"".utf8)
+    /// A tiny web page that renders each line with KaTeX.
+    static func page(for lines: [String]) -> String {
+        // Turn the lines into a safe JavaScript array literal (handles quotes and backslashes)
+        let data = (try? JSONEncoder().encode(lines)) ?? Data("[]".utf8)
         let jsString = String(decoding: data, as: UTF8.self)
             .replacingOccurrences(of: "</", with: "<\\/")   // can't end the <script> early
 
@@ -47,17 +47,22 @@ struct LatexView: UIViewRepresentable {
                    font: 24px -apple-system, sans-serif; }
             .empty { color: #66746B; font-size: 16px; }
             .katex-display { margin: 0; text-align: left; }
+            .line { padding: 6px 0; border-bottom: 1px solid #E3E8DB; }
           </style>
         </head>
         <body>
           <div id="math"></div>
           <script>
-            const latex = \(jsString);
-            const el = document.getElementById('math');
-            if (latex === '') {
-              el.textContent = 'Write something on the paper.';
-              el.className = 'empty';
-            } else {
+            const lines = \(jsString);
+            const page = document.getElementById('math');
+            if (lines.length === 0) {
+              page.textContent = 'Write something on the paper.';
+              page.className = 'empty';
+            }
+            for (const latex of lines) {
+              const el = document.createElement('div');
+              el.className = 'line';
+              page.appendChild(el);
               try {
                 katex.render(latex, el, { throwOnError: false, displayMode: true });
               } catch (e) {

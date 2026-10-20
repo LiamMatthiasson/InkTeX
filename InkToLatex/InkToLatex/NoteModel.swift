@@ -5,17 +5,24 @@
 import Foundation
 import Observation
 
-/// One recognized symbol on the page: its strokes, its LaTeX label, and its left edge.
+/// One recognized symbol on the page: its strokes, its LaTeX label, and where it sits.
 struct Symbol {
     var strokes: [[Point]]
     var label: String
-    var x: Double
+    var x: Double          // left edge
+    var top: Double = 0    // highest point (y grows downward)
+    var bottom: Double = 0 // lowest point
+
+    var centerY: Double { (top + bottom) / 2 }
 }
 
 @Observable
 final class NoteModel {
     // Templates: raw ones are saved; prepared ones (normalized once) are used for matching.
-    private(set) var templates: [Template] = []
+    private(set) var templates: [Template] = []      // YOUR templates (saved to disk)
+    private var starterCount = 0                     // built-in templates from the dataset
+    // Everything the recognizer compares against: the built-in starter templates first,
+    // then yours. (Yours go last, so "Undo Save" can just remove the last one.)
     private var prepared: [PreparedTemplate] = []
 
     // What's on the page right now
@@ -35,16 +42,64 @@ final class NoteModel {
     let joinScoreLimit = 1.5            // and together they must look like a real symbol
                                         // (best score below this; lower = closer match)
 
-    /// The symbols sorted left to right, labels joined with spaces.
-    var latex: String {
-        symbols.sorted { $0.x < $1.x }
-               .map { $0.label }
-               .joined(separator: " ")
+    // MARK: - Reading the page: lines, then the document
+
+    /// Every line gets at least this much height, so a line that starts with a flat
+    /// symbol like "-" still catches the digits written next to it.
+    let minLineHeight = 30.0
+
+    /// The symbols grouped into lines, top to bottom; each line reads left to right.
+    ///
+    /// Sort the symbols by their vertical center. Walking down the page, a symbol joins
+    /// the current line if its center falls inside that line's vertical band (from its
+    /// highest top to its lowest bottom); otherwise it starts a new line. It's the same
+    /// idea as grouping strokes into symbols, one level up.
+    var lines: [[Symbol]] {
+        let topToBottom = symbols.sorted { $0.centerY < $1.centerY }
+
+        var result: [[Symbol]] = []
+        var bandTop = 0.0
+        var bandBottom = 0.0
+
+        for symbol in topToBottom {
+            if !result.isEmpty && symbol.centerY >= bandTop && symbol.centerY <= bandBottom {
+                result[result.count - 1].append(symbol)       // same line: widen the band
+                bandTop = min(bandTop, symbol.top)
+                bandBottom = max(bandBottom, symbol.bottom)
+            } else {
+                result.append([symbol])                       // a new line starts here
+                let half = max(symbol.bottom - symbol.top, minLineHeight) / 2
+                bandTop = min(symbol.top, symbol.centerY - half)
+                bandBottom = max(symbol.bottom, symbol.centerY + half)
+            }
+        }
+        return result.map { line in line.sorted { $0.x < $1.x } }
+    }
+
+    /// Each line as LaTeX: its labels, left to right, joined with spaces.
+    var lineLatex: [String] {
+        lines.map { line in line.map { $0.label }.joined(separator: " ") }
+    }
+
+    /// The whole page as a complete LaTeX document, one display equation per line.
+    /// This is what Copy copies; paste it into Overleaf and it compiles as is.
+    var document: String {
+        let body = lineLatex.map { "\\[ \($0) \\]" }.joined(separator: "\n\n")
+        return """
+        \\documentclass{article}
+        \\usepackage{amsmath, amssymb}
+        \\begin{document}
+
+        \(body)
+
+        \\end{document}
+        """
     }
 
     init() {
+        loadStarterTemplates()
         loadTemplates()
-        status = "\(templates.count) templates saved"
+        status = "\(templates.count) of your templates + \(starterCount) built-in"
     }
 
     // MARK: - Strokes
@@ -77,6 +132,9 @@ final class NoteModel {
         let strokes = symbols[index].strokes
         symbols[index].label = results(for: strokes).first?.label ?? "?"
         symbols[index].x = xRange(strokes).min
+        let ys = yRange(strokes)
+        symbols[index].top = ys.min
+        symbols[index].bottom = ys.max
     }
 
     /// Recognize some strokes, reusing the answer if we've seen these exact strokes before.
@@ -134,6 +192,17 @@ final class NoteModel {
     /// Do two sets of strokes really overlap left to right? The shared stretch must be at
     /// least `minOverlap` of the narrower one's width. (A thin vertical line counts as
     /// about 6 points wide, so the upright of a "+" still overlaps its crossbar.)
+    private func yRange(_ strokeList: [[Point]]) -> (min: Double, max: Double) {
+        var minY = Double.infinity, maxY = -Double.infinity
+        for stroke in strokeList {
+            for p in stroke {
+                minY = min(minY, p.y)
+                maxY = max(maxY, p.y)
+            }
+        }
+        return (minY, maxY)
+    }
+
     private func overlapsX(_ a: [[Point]], _ b: [[Point]]) -> Bool {
         let ra = xRange(a)
         let rb = xRange(b)
@@ -183,11 +252,25 @@ final class NoteModel {
         URL.documentsDirectory.appending(path: "templates.json")
     }
 
+    /// The built-in templates (tools/convert.swift made them from the HWRT dataset).
+    /// They ship inside the app, so a fresh install already recognizes digits, operators,
+    /// letters and Greek. They're never saved or undone; only your own templates are.
+    private func loadStarterTemplates() {
+        guard let url = Bundle.main.url(forResource: "StarterTemplates", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let starters = try? JSONDecoder().decode([Template].self, from: data) else {
+            print("No StarterTemplates.json in the app: run tools/convert.swift")
+            return
+        }
+        starterCount = starters.count
+        prepared = starters.map(PreparedTemplate.init)   // normalize each one once, at startup
+    }
+
     private func loadTemplates() {
         guard let data = try? Data(contentsOf: templatesURL),
               let saved = try? JSONDecoder().decode([Template].self, from: data) else { return }
         templates = saved
-        prepared = saved.map(PreparedTemplate.init)    // normalize each one once, at startup
+        prepared += saved.map(PreparedTemplate.init)     // yours go after the starters
     }
 
     private func persistTemplates() {
