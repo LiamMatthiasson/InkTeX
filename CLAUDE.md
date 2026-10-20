@@ -79,6 +79,16 @@ There are two versions:
   across pages, so lines on page 2 follow page 1. The output is a complete document
   (`\documentclass{article}` + amsmath/amssymb), one `\[ ... \]` display equation per
   line. Copy copies the whole document; the panel renders each line with KaTeX.
+- **Spatial re-ranking** (`Layout.swift`, pure logic): normalize() throws away size and
+  position, so `applySpatialContext` brings them back per line to break ties between
+  look-alikes (g/9, s/5, x-height letters vs digits). The line is measured ONLY from symbols
+  the recognizer is confident about (top-2 gap >= `unsureMargin` 0.3); misread symbols would
+  otherwise pollute the baseline. Baseline = median bottom of confident non-descender,
+  non-floater symbols; size reference = median height of confident tall symbols (size rules
+  are skipped without one, e.g. "x + y"). Only unsure symbols are re-ranked, only among their
+  top 3, by adding `mismatchPenalty` per broken expectation. The same per-symbol measurements
+  (relativeHeight, drop) are meant to drive superscripts/subscripts next. Liam wrote
+  `median`, `measureLine` and `measure` himself.
 - **Speed**: `greedyMatch`/`cloudDistance` use early abandoning against each label's best
   score so far; this keeps every label's best score exact (verified identical to the
   original on 2,000 random shapes). Run the app in the Release configuration when judging

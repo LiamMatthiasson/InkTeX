@@ -50,7 +50,7 @@ func runRecognizerChecks() {
         Template(label: "+", strokes: [line(170, 340, 230, 340), line(200, 310, 200, 370)]),
         Template(label: "-", strokes: [line(170, 340, 230, 340)]),
         Template(label: "1", strokes: [line(200, 300, 200, 380)]),
-    ].map(PreparedTemplate.init)
+    ].map { PreparedTemplate($0) }
 
     let drawnPlus = [line(400, 170, 400, 110), line(430, 140, 370, 140)]
     let results = recognize(drawnPlus, templates: templates)
@@ -64,6 +64,30 @@ func runRecognizerChecks() {
           && isClose(results[0].score, 0)
           && results[1].label == "1" && isClose(results[1].score, 1.645027)
           && results[2].label == "-" && isClose(results[2].score, 2.045708))
+
+
+    // Layout: median, and re-ranking by size/position (see Layout.swift)
+    check("median of 5", median([150, 172, 151, 138, 149]) == 150)
+    check("median of 4", median([150, 151, 138, 149]) == 149.5)
+
+    func sym(_ x: Double, _ top: Double, _ bottom: Double, _ guesses: [(String, Double)]) -> Symbol {
+        let ranked = guesses.map { Match(label: $0.0, score: $0.1) }
+        return Symbol(strokes: [], label: ranked[0].label, x: x, top: top, bottom: bottom, guesses: ranked)
+    }
+    // "2 g 9": the recognizer misread the g as 9 and the 9 as g; the confident 2 is the ruler
+    let fixed = applySpatialContext([
+        sym(0, 100, 150, [("2", 0.2), ("z", 0.9)]),
+        sym(60, 118, 172, [("9", 1.20), ("g", 1.25)]),
+        sym(120, 99, 151, [("g", 1.1), ("9", 1.2)]),
+    ]).map { $0.label }
+    check("re-rank 2 g 9", fixed == ["2", "g", "9"])
+    // "3 s 5": a small s misread as 5, a tall 5 misread as s
+    let sized = applySpatialContext([
+        sym(0, 100, 150, [("3", 0.3), ("g", 1.2)]),
+        sym(60, 125, 150, [("5", 1.0), ("s", 1.1)]),
+        sym(120, 100, 151, [("s", 0.9), ("5", 0.95)]),
+    ]).map { $0.label }
+    check("re-rank 3 s 5", sized == ["3", "s", "5"])
 
     print("---------------------------")
 }

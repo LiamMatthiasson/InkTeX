@@ -12,7 +12,7 @@ struct Symbol {
     var x: Double          // left edge
     var top: Double = 0    // highest point (y grows downward)
     var bottom: Double = 0 // lowest point
-
+    var guesses: [Match] = []   // the recognizer's ranked guesses (Layout.swift may re-rank them)
     var centerY: Double { (top + bottom) / 2 }
 }
 
@@ -73,7 +73,9 @@ final class NoteModel {
                 bandBottom = max(symbol.bottom, symbol.centerY + half)
             }
         }
-        return result.map { line in line.sorted { $0.x < $1.x } }
+        // Left to right, then let each symbol's size and position on its line break ties
+        // between look-alikes (g vs 9, s vs 5…). See Layout.swift.
+        return result.map { line in applySpatialContext(line.sorted { $0.x < $1.x }) }
     }
 
     /// Each line as LaTeX: its labels, left to right, joined with spaces.
@@ -130,7 +132,9 @@ final class NoteModel {
     /// (Re)recognize one symbol, so a "-" becomes a "+" once its second line arrives.
     private func relabel(_ index: Int) {
         let strokes = symbols[index].strokes
-        symbols[index].label = results(for: strokes).first?.label ?? "?"
+        let guesses = results(for: strokes)
+        symbols[index].guesses = Array(guesses.prefix(5))
+        symbols[index].label = guesses.first?.label ?? "?"
         symbols[index].x = xRange(strokes).min
         let ys = yRange(strokes)
         symbols[index].top = ys.min
@@ -263,14 +267,14 @@ final class NoteModel {
             return
         }
         starterCount = starters.count
-        prepared = starters.map(PreparedTemplate.init)   // normalize each one once, at startup
+        prepared = starters.map { PreparedTemplate($0) }   // normalize each one once, at startup
     }
 
     private func loadTemplates() {
         guard let data = try? Data(contentsOf: templatesURL),
               let saved = try? JSONDecoder().decode([Template].self, from: data) else { return }
         templates = saved
-        prepared += saved.map(PreparedTemplate.init)     // yours go after the starters
+        prepared += saved.map { PreparedTemplate($0) }  // yours go after the starters
     }
 
     private func persistTemplates() {
