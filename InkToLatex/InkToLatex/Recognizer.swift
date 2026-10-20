@@ -25,6 +25,10 @@ struct Point: Codable {
 struct Template: Codable {
     var label: String
     var strokes: [[Point]]
+    /// For corrections: what the recognizer wrongly said this was (nil for templates
+    /// you taught directly). Not used for matching; it's a record of the recognizer's
+    /// mistakes, for measuring accuracy and, later, training a classifier.
+    var guessed: String? = nil
 }
 
 /// A template with its normalized shape computed once, ahead of time.

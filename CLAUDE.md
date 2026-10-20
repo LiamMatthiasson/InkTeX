@@ -139,6 +139,7 @@ There are two versions:
 - NoteStore: Documents/Notes/notes.json (id, title, modified) + <id>.drawing (PKDrawing). Only ink is saved; LaTeX is rebuilt by replaying strokes on open. Autosave 1 s after the last change and when leaving the app.
 - InkCanvas takes a CanvasLoad (bump token to show a drawing; erase = load an empty one).
 - "Teach" saves the LAST symbol as a template and leaves the ink (it used to erase the page, which would destroy notes).
+- Correcting: the LaTeX panel shows every symbol as a chip (unsure ones tinted). Tap → top 3 guesses or "Type another…" → NoteModel.correct saves that symbol's strokes as a template (Template.guessed records what the recognizer wrongly said: future accuracy stats / classifier training data). Symbols have a stable `id` for this.
 - Split view: LaTeX panel beside the notebook, drag handle resizes (280 pt min, notebook keeps 480), width remembered via @AppStorage.
 - NoteModel.debugLogging prints the page and grouping decisions to the console; turn off when done tuning.
 

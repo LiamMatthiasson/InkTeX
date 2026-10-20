@@ -26,6 +26,8 @@ struct ContentView: View {
     @State private var dragStartWidth: Double?            // panel width when a drag began
     @State private var showNotes = false
     @State private var confirmErase = false
+    @State private var correcting: Symbol?                 // the symbol "Type another…" is for
+    @State private var correctionText = ""
 
     @Environment(\.scenePhase) private var scenePhase
 
@@ -293,6 +295,10 @@ struct ContentView: View {
 
             Divider()
 
+            symbolChips
+
+            Divider()
+
             LatexView(lines: model.lineLatex)
                 .frame(maxHeight: .infinity)
 
@@ -312,6 +318,93 @@ struct ContentView: View {
             .background(Color(hex: 0xF1F4EC))
         }
         .background(Color.sheet)
+    }
+
+    // MARK: - Correcting symbols (chips in the LaTeX panel)
+
+    /// Every symbol as a chip, one row per line. Tap one to pick from the recognizer's
+    /// top guesses or type the right LaTeX; the app learns it as a template.
+    private var symbolChips: some View {
+        let lines = model.lines
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                if lines.isEmpty {
+                    Text("Symbols appear here. Tap one to correct it.")
+                        .font(.footnote)
+                        .foregroundStyle(Color.muted)
+                }
+                ForEach(lines.indices, id: \.self) { n in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(lines[n], id: \.id) { symbol in
+                                symbolChip(symbol)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+        }
+        .frame(maxHeight: 150)
+        .alert("What is this symbol?", isPresented: Binding(
+            get: { correcting != nil },
+            set: { if !$0 { correcting = nil } }
+        )) {
+            TextField("LaTeX, e.g. b or \\theta", text: $correctionText)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("Learn it") {
+                if let symbol = correcting { model.correct(symbol.id, to: correctionText) }
+                correcting = nil
+            }
+            Button("Cancel", role: .cancel) { correcting = nil }
+        } message: {
+            Text("It will be saved as a template, so it's recognized next time.")
+        }
+    }
+
+    private func symbolChip(_ symbol: Symbol) -> some View {
+        Menu {
+            // The recognizer's top 3 guesses; the current one is checked
+            ForEach(Array(symbol.guesses.prefix(3).enumerated()), id: \.offset) { _, guess in
+                Button {
+                    model.correct(symbol.id, to: guess.label)
+                } label: {
+                    if guess.label == symbol.label {
+                        Label(guess.label, systemImage: "checkmark")
+                    } else {
+                        Text(guess.label)
+                    }
+                }
+            }
+            Divider()
+            Button("Type another…") {
+                correctionText = ""
+                correcting = symbol
+            }
+        } label: {
+            HStack(spacing: 2) {
+                if symbol.role != .normal {             // ^ or _ for scripts
+                    Text(symbol.role == .sup ? "^" : "_")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Color.muted)
+                }
+                Text(symbol.label)
+                    .font(.system(.callout, design: .monospaced))
+                    .foregroundStyle(Color.ink)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(isUnsure(symbol) ? Color(hex: 0xF6E7C8) : Color.white,
+                        in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.rule))
+        }
+    }
+
+    /// Unsure symbols are tinted, so you know which chips to check first.
+    private func isUnsure(_ symbol: Symbol) -> Bool {
+        !isConfident(symbol)
     }
 
     // MARK: - Notes list (a popover from the Notes button)

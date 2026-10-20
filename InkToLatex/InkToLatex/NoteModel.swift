@@ -7,6 +7,7 @@ import Observation
 
 /// One recognized symbol on the page: its strokes, its LaTeX label, and where it sits.
 struct Symbol {
+    var id = UUID()        // stays the same as strokes are added, so a correction finds it
     var strokes: [[Point]]
     var label: String
     var x: Double          // left edge
@@ -251,18 +252,36 @@ final class NoteModel {
     /// Teach: saves the LAST symbol you wrote as a template with this label, and leaves
     /// the ink where it is (it's part of your note now). Write a symbol, type what it
     /// should be, tap Teach, and it's re-read with the new template.
-    func saveTemplate(label rawLabel: String) -> Bool {
+    func saveTemplate(label: String) -> Bool {
+        guard let last = symbols.indices.last else { status = "Write a symbol first"; return false }
+        return teach(last, label: label)
+    }
+
+    /// Correct: a symbol picked in the LaTeX panel is really `label`. Same as Teach, for
+    /// any symbol on the page, and it records what the recognizer had said.
+    func correct(_ symbolID: UUID, to label: String) {
+        guard let i = symbols.firstIndex(where: { $0.id == symbolID }) else { return }
+        _ = teach(i, label: label)
+    }
+
+    /// Saves symbol i's strokes as a template for `label`, then re-reads that symbol.
+    private func teach(_ i: Int, label rawLabel: String) -> Bool {
         let label = rawLabel.trimmingCharacters(in: .whitespaces)   // the label is the LaTeX
         guard !label.isEmpty else { status = "Type a label first"; return false }
-        guard let last = symbols.indices.last else { status = "Write a symbol first"; return false }
 
-        let template = Template(label: label, strokes: symbols[last].strokes)
+        let wasGuessed = symbols[i].guesses.first?.label
+        let template = Template(label: label, strokes: symbols[i].strokes,
+                                guessed: wasGuessed == label ? nil : wasGuessed)
         templates.append(template)
         prepared.append(PreparedTemplate(template))   // normalized once, right now
         recognitionCache.removeAll()                  // results may change with a new template
         persistTemplates()
-        relabel(last)                                 // re-read it: now it matches exactly
-        status = "Taught \"\(label)\" (\(templates.count) of yours)"
+        relabel(i)                                    // re-read it: now it matches exactly
+        if let wrong = template.guessed {
+            status = "Learned \"\(label)\" (it read \"\(wrong)\")"
+        } else {
+            status = "Taught \"\(label)\" (\(templates.count) of yours)"
+        }
         return true
     }
 
