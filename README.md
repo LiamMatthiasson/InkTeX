@@ -113,7 +113,7 @@ and the re-ranking.
 - **Templates store raw strokes**, never normalized shapes, so changing resampling or
   normalization never breaks saved templates. The JSON format is the same in both apps.
 - **The recognizer is pure**: points in, ranked results out. `RecognizerChecks.swift`
-  prints ✅/❌ lines at launch comparing the Swift port with numbers from the JS version.
+  prints lines at launch comparing the Swift port with numbers from the JS version.
 - **Early abandoning** skips the rest of a comparison once it's worse than that label's
   best so far; every label's best score stays exact.
 
@@ -170,6 +170,7 @@ Edit `wanted` and `perSymbol` at the top of `convert.swift` to change the set.
 - Square roots and more layout.
 - Save per-line math/text overrides with the note.
 - `.tex` file export and a settings screen.
+- a CNN classifier (PyTorch-trained, forward pass in Swift)
 
 ## Credits
 
