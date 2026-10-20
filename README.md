@@ -4,6 +4,11 @@ Handwrite math on an iPad with an Apple Pencil and get LaTeX back, live. Recogni
 entirely on the device: no LLM, no server, no account. It's free, private, fast, and works
 offline.
 
+
+
+https://github.com/user-attachments/assets/80100cd4-43c2-45c5-b3e4-abcf7f192611
+
+
 | Version | Where | Status |
 |---------|-------|--------|
 | **Native iPad app** | `InkToLatex/` (SwiftUI + PencilKit) | Main focus |
