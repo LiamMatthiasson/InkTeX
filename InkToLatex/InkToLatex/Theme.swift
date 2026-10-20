@@ -1,28 +1,26 @@
-// The engineering-pad look from the web version: colors, grid paper, button styles.
-// (The Swift equivalent of styles.css.)
+// Colors, grid paper and button styles (mirrors styles.css).
 
 import SwiftUI
 
-// MARK: - Colors (same values as styles.css)
+// MARK: - Colors
 
 extension Color {
-    /// Make a color from a hex number like 0xEEF2E6, the way CSS writes colors.
     init(hex: UInt32) {
         self.init(red: Double((hex >> 16) & 0xFF) / 255,
                   green: Double((hex >> 8) & 0xFF) / 255,
                   blue: Double(hex & 0xFF) / 255)
     }
 
-    static let paper = Color(hex: 0xEEF2E6)        // pale green engineering paper
-    static let grid = Color(hex: 0xDCE5D0)         // fine grid, every 20 points
-    static let gridMajor = Color(hex: 0xC9D6BA)    // heavier line, every 100 points
+    static let paper = Color(hex: 0xEEF2E6)
+    static let grid = Color(hex: 0xDCE5D0)         // every 20 pt
+    static let gridMajor = Color(hex: 0xC9D6BA)    // every 100 pt
     static let sheet = Color(hex: 0xFAFBF6)        // panels and bars
     static let rule = Color(hex: 0xCBD5C0)         // borders
-    static let ink = Color(hex: 0x22302A)          // text
+    static let ink = Color(hex: 0x22302A)
     static let muted = Color(hex: 0x66746B)
-    static let padGreen = Color(hex: 0x2F5D44)     // Save, active pen
+    static let padGreen = Color(hex: 0x2F5D44)
     static let padGreenTint = Color(hex: 0xDDE8D3)
-    static let brick = Color(hex: 0x9E3B3B)        // Erase
+    static let brick = Color(hex: 0x9E3B3B)
 }
 
 // MARK: - Grid paper background
@@ -54,7 +52,7 @@ struct GridPaper: View {
     }
 }
 
-// MARK: - The little squiggle drawn on each pen button
+// MARK: - Pen button squiggle
 
 struct Squiggle: Shape {
     func path(in rect: CGRect) -> Path {
@@ -73,7 +71,6 @@ struct Squiggle: Shape {
 
 // MARK: - Button styles
 
-/// Solid colored button (Save, Erase)
 struct FilledButtonStyle: ButtonStyle {
     var color: Color
 
@@ -88,7 +85,6 @@ struct FilledButtonStyle: ButtonStyle {
     }
 }
 
-/// Outlined button (Undo, Show LaTeX, Copy)
 struct OutlineButtonStyle: ButtonStyle {
     var compact = false
 
@@ -104,7 +100,7 @@ struct OutlineButtonStyle: ButtonStyle {
     }
 }
 
-/// The white floating "sheet" behind the toolbars
+/// The floating sheet behind the toolbars
 extension View {
     func floatingSheet(cornerRadius: CGFloat = 12) -> some View {
         self

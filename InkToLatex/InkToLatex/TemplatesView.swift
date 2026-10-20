@@ -1,17 +1,14 @@
-// The Templates screen: everything you've taught, grouped by symbol, each with a small
-// picture of the ink. Swipe left to delete one; tap Rename to fix its label. Only YOUR
-// templates are listed (the ~670 built-in ones from the dataset can't be changed here).
+// Your taught templates, grouped by label: swipe to delete, Rename to fix a label.
+// The built-in starters aren't listed.
 
 import SwiftUI
 
-/// One of your templates, with its position in `model.templates` (needed to delete it).
 struct IndexedTemplate: Identifiable {
-    let index: Int
+    let index: Int            // position in model.templates
     let template: Template
     var id: Int { index }
 }
 
-/// All your templates for one label ("2", "\alpha"…).
 struct TemplateGroup: Identifiable {
     let label: String
     let items: [IndexedTemplate]
@@ -21,10 +18,9 @@ struct TemplateGroup: Identifiable {
 struct TemplatesView: View {
     let model: NoteModel
     @Environment(\.dismiss) private var dismiss
-    @State private var renaming: IndexedTemplate?     // the template "Rename" is for
+    @State private var renaming: IndexedTemplate?
     @State private var newLabel = ""
 
-    /// Your templates grouped by label, labels in alphabetical order.
     private var groups: [TemplateGroup] {
         let indexed = model.templates.enumerated().map { IndexedTemplate(index: $0.offset, template: $0.element) }
         let byLabel = Dictionary(grouping: indexed) { $0.template.label }
@@ -44,8 +40,7 @@ struct TemplatesView: View {
                             row(item)
                         }
                         .onDelete { offsets in
-                            // Delete from the highest position down, so the positions of
-                            // the others don't shift underneath us.
+                            // Highest first, so the other positions don't shift
                             let positions = offsets.map { group.items[$0].index }.sorted(by: >)
                             positions.forEach { model.deleteTemplate(at: $0) }
                         }
@@ -95,7 +90,7 @@ struct TemplatesView: View {
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(Color.ink)
                 if let guessed = item.template.guessed {
-                    Text("a correction: it was read as \(guessed)")   // from tapping a chip
+                    Text("a correction: it was read as \(guessed)")
                         .font(.caption)
                         .foregroundStyle(Color.muted)
                 }
@@ -110,7 +105,7 @@ struct TemplatesView: View {
     }
 }
 
-/// A small picture of some strokes, scaled to fit (keeping their shape).
+/// Strokes scaled to fit, centered.
 struct InkPreview: View {
     let strokes: [[Point]]
 
@@ -122,7 +117,6 @@ struct InkPreview: View {
             let inset = 6.0
             let scale = min((size.width - 2 * inset) / max(maxX - minX, 1),
                             (size.height - 2 * inset) / max(maxY - minY, 1))
-            // center the ink in the box
             let offsetX = (size.width - (maxX - minX) * scale) / 2
             let offsetY = (size.height - (maxY - minY) * scale) / 2
             func spot(_ p: Point) -> CGPoint {

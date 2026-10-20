@@ -1,6 +1,5 @@
-// The screen: the notebook (pages + PencilKit) with the pen hotbar on top and the
-// toolbar at the bottom, and, in split view, the LaTeX panel beside it with a handle
-// you drag to resize. Notes save themselves a second after you stop writing.
+// The screen: notebook with pen hotbar and toolbar, and in split view the resizable
+// LaTeX panel. Notes autosave a second after the last change.
 
 import SwiftUI
 import PencilKit
@@ -9,35 +8,31 @@ struct ContentView: View {
     @State private var model = NoteModel()
     @State private var store = NoteStore()
 
-    // The open note
     @State private var currentNote: UUID?
-    @State private var canvasLoad = CanvasLoad()          // bump to show a different drawing
-    @State private var latestDrawing = PKDrawing()        // the ink right now (what gets saved)
-    @State private var saveTask: Task<Void, Never>?       // the pending autosave
+    @State private var canvasLoad = CanvasLoad()
+    @State private var latestDrawing = PKDrawing()        // what gets saved
+    @State private var saveTask: Task<Void, Never>?
 
-    // Pens
     @State private var pen: PenKind = .pen
-    @State private var widths: [PenKind: CGFloat] = [:]   // thickness chosen for each pen
+    @State private var widths: [PenKind: CGFloat] = [:]
 
-    // Panels and dialogs
     @State private var label = ""
     @State private var splitView = false
-    @AppStorage("latexPanelWidth") private var panelWidth: Double = 420   // remembered between launches
-    @State private var dragStartWidth: Double?            // panel width when a drag began
+    @AppStorage("latexPanelWidth") private var panelWidth: Double = 420
+    @State private var dragStartWidth: Double?
     @State private var showNotes = false
     @State private var showTemplates = false
     @State private var confirmErase = false
-    @State private var correcting: Symbol?                 // the symbol "Type another…" is for
+    @State private var correcting: Symbol?                 // for "Type another…"
     @State private var correctionText = ""
 
     @Environment(\.scenePhase) private var scenePhase
 
-    /// Size of the preview dot: the real width, scaled down for big erasers so it fits
+    /// The size preview dot, scaled down for big erasers
     private var preview: CGFloat {
         pen == .eraser ? max(6, width.wrappedValue * 30 / 80) : width.wrappedValue
     }
 
-    /// The current tool's size, for the slider (each tool remembers its own)
     private var width: Binding<CGFloat> {
         Binding(
             get: { widths[pen] ?? pen.defaultWidth },
@@ -62,7 +57,7 @@ struct ContentView: View {
             openMostRecentNote()
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { saveNow() }   // leaving the app: save right away
+            if phase != .active { saveNow() }
         }
         .confirmationDialog("Erase everything in this note?", isPresented: $confirmErase,
                             titleVisibility: .visible) {
@@ -76,9 +71,6 @@ struct ContentView: View {
 
     private var notebook: some View {
         ZStack {
-            // Notebook pages + PencilKit. Scroll with two fingers (one with a mouse/finger
-            // when no Pencil is paired); pinch to zoom; two-finger tap = undo,
-            // three-finger tap = redo.
             InkCanvas(
                 pen: pen,
                 width: width.wrappedValue,
@@ -134,7 +126,7 @@ struct ContentView: View {
                     .background(pen == kind ? Color.padGreenTint : Color.clear,
                                 in: RoundedRectangle(cornerRadius: 10))
                     .overlay(alignment: .bottom) {
-                        if pen == kind {   // the chosen pen gets a green underline
+                        if pen == kind {
                             Capsule()
                                 .fill(Color.padGreen)
                                 .frame(height: 2)
@@ -150,22 +142,21 @@ struct ContentView: View {
                 .frame(height: 40)
                 .padding(.horizontal, 6)
 
-            // Size slider for the current tool, with a dot showing the size
             HStack(spacing: 10) {
                 Slider(value: width, in: pen.widthRange)
                     .frame(width: 130)
                     .tint(Color.padGreen)
-                    .id(pen)                          // fresh slider per tool, since ranges differ
+                    .id(pen)                          // ranges differ per tool
                 ZStack {
                     if pen == .eraser {
-                        Circle().stroke(Color.muted, lineWidth: 1.5)       // eraser: an outline
+                        Circle().stroke(Color.muted, lineWidth: 1.5)
                             .frame(width: preview, height: preview)
                     } else {
                         Circle().fill(pen.color)
                             .frame(width: preview, height: preview)
                     }
                 }
-                .frame(width: 30, height: 30)       // fixed space so the bar doesn't jump around
+                .frame(width: 30, height: 30)
             }
             .padding(.trailing, 8)
         }
@@ -174,7 +165,7 @@ struct ContentView: View {
 
     // MARK: - Bottom toolbar
 
-    /// One row when there's room; in a narrow split view, two rows instead.
+    /// One row, or two in a narrow split view.
     private var bottomBar: some View {
         ViewThatFits(in: .horizontal) {
             HStack(alignment: .center) {
@@ -195,7 +186,6 @@ struct ContentView: View {
         }
     }
 
-    /// Teach: type what your LAST symbol should be, tap Teach, and it becomes a template.
     private var teachControls: some View {
         HStack(spacing: 6) {
             TextField("Last symbol is… e.g. 2 (not ^2)", text: $label)
@@ -207,15 +197,13 @@ struct ContentView: View {
                 .background(Color.white, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.rule))
 
-            // The label stays filled in, so you can teach five "b"s in a row
+            // The label stays filled in, to teach several in a row
             Button("Teach") { _ = model.saveTemplate(label: label) }
             .buttonStyle(FilledButtonStyle(color: .padGreen))
 
-            // Removes the last template you taught (stroke undo is the two-finger tap)
             Button("Undo Teach") { model.undoTemplate() }
                 .buttonStyle(OutlineButtonStyle())
 
-            // Everything you've taught: delete or rename any of them
             Button("Templates") { showTemplates = true }
                 .buttonStyle(OutlineButtonStyle())
                 .sheet(isPresented: $showTemplates) { TemplatesView(model: model) }
@@ -249,14 +237,12 @@ struct ContentView: View {
 
     // MARK: - Split view: the handle and the LaTeX panel
 
-    /// The panel can't get narrower than 280 points, or leave the notebook less than 480.
+    /// At least 280 pt, leaving the notebook at least 480.
     private func clampedPanelWidth(_ total: CGFloat) -> CGFloat {
         let widest = max(280, total - 480)
         return min(max(panelWidth, 280), widest)
     }
 
-    /// The bar between notebook and panel. Drag it left to widen the panel, right to
-    /// narrow it.
     private func splitHandle(totalWidth: CGFloat) -> some View {
         ZStack {
             Rectangle().fill(Color.rule).frame(width: 1)
@@ -265,13 +251,12 @@ struct ContentView: View {
         .frame(width: 18)
         .frame(maxHeight: .infinity)
         .background(Color.sheet)
-        .contentShape(Rectangle())                 // the whole strip is grabbable
+        .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 1)
                 .onChanged { drag in
                     let start = dragStartWidth ?? Double(clampedPanelWidth(totalWidth))
                     dragStartWidth = start
-                    // moving left (negative translation) makes the panel wider
                     panelWidth = start - drag.translation.width
                     panelWidth = Double(clampedPanelWidth(totalWidth))
                 }
@@ -290,7 +275,7 @@ struct ContentView: View {
                     if model.docBlocks.isEmpty {
                         model.status = "Nothing to copy yet"
                     } else {
-                        UIPasteboard.general.string = model.document   // the whole .tex document
+                        UIPasteboard.general.string = model.document
                         model.status = "Copied the LaTeX document"
                     }
                 }
@@ -310,7 +295,6 @@ struct ContentView: View {
 
             Divider()
 
-            // The full document's source (what Copy copies)
             ScrollView {
                 Text(model.docBlocks.isEmpty ? "The LaTeX document appears here." : model.document)
                     .font(.system(.callout, design: .monospaced))
@@ -328,8 +312,7 @@ struct ContentView: View {
 
     // MARK: - Correcting symbols (chips in the LaTeX panel)
 
-    /// Every symbol as a chip, one row per line. Tap one to pick from the recognizer's
-    /// top guesses or type the right LaTeX; the app learns it as a template.
+    /// One row of chips per line; tap a chip to correct it.
     private var symbolChips: some View {
         let lines = model.lines
         return ScrollView {
@@ -344,7 +327,6 @@ struct ContentView: View {
                     HStack(spacing: 6) {
                         lineKindMenu(line)
                         if model.kind(of: line) == .text {
-                            // a text line: what Vision read
                             Text(model.textReading(of: line)?.text ?? "reading…")
                                 .font(.callout)
                                 .foregroundStyle(Color.ink)
@@ -352,7 +334,6 @@ struct ContentView: View {
                         } else {
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 6) {
-                                    // a fraction shows the symbols it's made of
                                     ForEach(line.flatMap { $0.children.isEmpty ? [$0] : $0.children },
                                             id: \.id) { symbol in
                                         symbolChip(symbol)
@@ -386,7 +367,6 @@ struct ContentView: View {
 
     private func symbolChip(_ symbol: Symbol) -> some View {
         Menu {
-            // The recognizer's top 3 guesses; the current one is checked
             ForEach(Array(symbol.guesses.prefix(3).enumerated()), id: \.offset) { _, guess in
                 Button {
                     model.correct(symbol.id, to: guess.label)
@@ -405,7 +385,7 @@ struct ContentView: View {
             }
         } label: {
             HStack(spacing: 2) {
-                if symbol.role != .normal {             // ^ or _ for scripts
+                if symbol.role != .normal {
                     Text(symbol.role == .sup ? "^" : "_")
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(Color.muted)
@@ -422,7 +402,7 @@ struct ContentView: View {
         }
     }
 
-    /// The icon at the start of each row: math (ƒ) or text (¶). Tap to overrule it.
+    /// Math (ƒ) or text (¶) for a line; tap to overrule.
     private func lineKindMenu(_ line: [Symbol]) -> some View {
         let isText = model.kind(of: line) == .text
         return Menu {
@@ -438,7 +418,6 @@ struct ContentView: View {
         }
     }
 
-    /// Unsure symbols are tinted, so you know which chips to check first.
     private func isUnsure(_ symbol: Symbol) -> Bool {
         !isConfident(symbol)
     }
@@ -468,7 +447,7 @@ struct ContentView: View {
                         .listRowBackground(note.id == currentNote ? Color.padGreenTint : Color.white)
                     }
                     .onDelete { offsets in
-                        // look up the ids first: deleting shifts the positions of the rest
+                        // ids first: deleting shifts positions
                         let ids = offsets.map { store.notes[$0].id }
                         ids.forEach { delete($0) }
                     }
@@ -486,7 +465,6 @@ struct ContentView: View {
         .frame(width: 360, height: 480)
     }
 
-    /// The open note's title, editable in the notes list.
     private var currentTitle: Binding<String> {
         Binding(
             get: { store.notes.first { $0.id == currentNote }?.title ?? "" },
@@ -497,7 +475,7 @@ struct ContentView: View {
     // MARK: - Opening and saving notes
 
     private func openMostRecentNote() {
-        guard currentNote == nil else { return }       // onAppear can run more than once
+        guard currentNote == nil else { return }       // onAppear can run twice
         if let recent = store.notes.first {
             open(recent.id)
         } else {
@@ -509,8 +487,7 @@ struct ContentView: View {
         open(store.create().id)
     }
 
-    /// Saves the open note, then shows another. The canvas replays the new note's strokes
-    /// into the model, which rebuilds its symbols and LaTeX from scratch.
+    /// Saves the open note and loads another; the canvas replays its strokes into the model.
     private func open(_ id: UUID) {
         saveNow()
         currentNote = id
@@ -522,14 +499,14 @@ struct ContentView: View {
     private func delete(_ id: UUID) {
         let wasOpen = id == currentNote
         if wasOpen {
-            saveTask?.cancel()                         // don't save a note we're deleting
+            saveTask?.cancel()
             currentNote = nil
         }
         store.delete(id)
-        if wasOpen { openMostRecentNote() }            // open another (or a fresh one)
+        if wasOpen { openMostRecentNote() }
     }
 
-    /// Save a second after the last change, so we write once per pause, not per stroke.
+    /// Once per pause, not per stroke.
     private func scheduleSave() {
         saveTask?.cancel()
         saveTask = Task {

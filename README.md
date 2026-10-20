@@ -1,203 +1,186 @@
 # Ink to LaTeX
 
 Handwrite math on an iPad with an Apple Pencil and get LaTeX back, live. Recognition runs
-entirely on the device: no LLM, no server, no account. That makes it free, private, fast,
-and usable offline.
-
-There are two versions of the app:
+entirely on the device: no LLM, no server, no account. It's free, private, fast, and works
+offline.
 
 | Version | Where | Status |
 |---------|-------|--------|
-| **Web app** | Repo root (`index.html`, `app.js`, `recognizer.js`, `styles.css`, `vendor/`). Live at <https://liammatthiasson.github.io/LaTex/> | Working demo |
-| **Native iPad app** | `InkToLatex/` (SwiftUI + PencilKit) | In progress, the main focus |
+| **Native iPad app** | `InkToLatex/` (SwiftUI + PencilKit) | Main focus |
+| **Web app** | Repo root. Live at <https://liammatthiasson.github.io/LaTex/> | Demo, simpler |
 
-The project moved to a native app because pen feel in Safari ran into the browser's limits
-(input latency, batched pointer events). The web app stays up as a demo.
-
-## How recognition works
-
-Both apps use the same recognizer: the **$P point-cloud recognizer** (Vatavu, Anthony &
-Wobbrock, 2012). It's in `recognizer.js`, and `InkToLatex/InkToLatex/Recognizer.swift` is a
-line-by-line Swift port of it.
-
-1. **Flatten.** A symbol's strokes are joined into one list of points, each tagged with its stroke.
-2. **Resample** to 32 evenly spaced points along the ink, skipping the gaps where the pen was lifted.
-3. **Normalize.** Move the points so their center sits at the origin, then scale so the
-   larger side of the bounding box is 1.
-4. **Match.** Compare the drawing to each template as an unordered cloud of points: each
-   point greedily claims the nearest unclaimed point in the other cloud, and the weighted
-   distances are summed. Several starting points are tried in both directions and the best
-   score is kept.
-
-Because shapes are compared as clouds of points, stroke order and direction don't matter
-(a `+` drawn vertical-first matches one drawn horizontal-first). `recognize()` returns a
-ranked list of labels, lowest score first, not just the winner.
-
-A few design choices worth knowing:
-
-- **Template labels are the LaTeX itself** (`2`, `+`, `\alpha`), so building the output is
-  just putting symbols in reading order and joining their labels with spaces.
-- **Templates store raw strokes**, never normalized shapes. The normalized version is
-  recomputed when templates load, so changing the resampling or normalization never breaks
-  saved templates. Template JSON is the same format in both apps.
-- **The recognizer is pure**: points in, ranked results out. No UI, storage or events.
-  `RecognizerChecks.swift` checks the Swift port against numbers from the JavaScript version
-  and prints ✅/❌ lines in Xcode's console at launch.
-- **Early abandoning** makes matching fast: once a template's partial distance is already
-  worse than the best score for its label, the rest of that comparison is skipped. Every
-  label's best score stays exact.
+The project moved to a native app because pen feel in Safari hit the browser's limits
+(input latency, batched pointer events).
 
 ## The native iPad app
 
-Open `InkToLatex/InkToLatex.xcodeproj` in Xcode and run it on an iPad or the iPad
-simulator. Swift sources live in `InkToLatex/InkToLatex/`, and Xcode includes new files
-there automatically. When judging speed, use the **Release** configuration: Debug builds of
-this numeric code are much slower.
+Open `InkToLatex/InkToLatex.xcodeproj` in Xcode and run on an iPad or the iPad simulator.
+Use the **Release** configuration when judging speed; Debug builds of the numeric code
+are much slower.
 
 ### Using it
 
-- **Write.** Each stroke is recognized when the pen lifts. A fresh install already reads
-  digits, operators, letters and Greek, thanks to the built-in starter templates (see
-  [Starter templates](#starter-templates-hwrt-dataset)).
-- **Notebook pages.** The paper is a stack of letter-sized grid pages that scroll
-  vertically; a blank page always follows the last one with ink. Pinch to zoom (up to 4x).
-- **Tools.** The hotbar at the top has Pencil, Pen, Marker and Eraser, each with its own
-  size slider. Ink, pressure and palm rejection come from PencilKit.
-- **Undo / redo.** Two-finger double-tap undoes a stroke; three-finger double-tap redoes it.
-- **Show LaTeX** opens a panel that renders each line with KaTeX and shows the full source.
-  **Copy** copies a complete, compilable LaTeX document (`\documentclass{article}` with
-  amsmath and amssymb, one `\[ ... \]` display equation per line), ready to paste into
-  Overleaf.
-- **Erase** clears the page.
+- **Write.** Strokes are recognized as you write. A fresh install already reads digits,
+  operators, letters, Greek and calculus symbols from the built-in starter templates.
+- **Notebook.** Letter-sized grid pages scroll vertically, with a blank page always after
+  the last one with ink. Pinch to zoom up to 4x.
+- **Tools.** Pencil, Pen, Marker and Eraser in the top hotbar, each with its own size.
+- **Undo / redo.** Two-finger double-tap undoes, three-finger double-tap redoes.
+- **Notes.** Create, rename, switch and delete notes. They autosave a second after you
+  stop writing and when you leave the app.
+- **Split View** opens the LaTeX panel beside the notebook (drag the handle to resize).
+  It shows each symbol as a chip, the typeset document, and its source. **Copy** copies a
+  complete, compilable document, ready for Overleaf.
+- **Erase** clears the note (after confirming).
 
-### Teaching it your handwriting
+### Teaching and correcting
 
-Your own templates make recognition much better than the starters alone:
+- **Teach:** write a symbol, type its LaTeX (`2`, `x`, `\alpha`, `\int`) and tap **Teach**.
+  The last symbol on the page becomes a template; the ink stays. Labels are the symbol
+  itself: `2`, not `^2`. Raised or lowered comes from where you write it.
+- **Correct:** tap any chip in the LaTeX panel to pick one of the top 3 guesses or type
+  another. Unsure symbols are tinted. Corrections are saved as templates too, along with
+  what the recognizer wrongly guessed.
+- **Templates** lists everything you've taught, with a picture of each, to delete or
+  rename. **Undo Teach** removes the latest one.
 
-1. Write one symbol, for example a `2`.
-2. Type its LaTeX in the label box: `2`, `+`, `x`, `\alpha`, `\int`, ...
-3. Press **Save**. The drawing becomes a template and the page clears.
+Your templates are saved to `templates.json` in the app's Documents folder, so they're per
+device. Starter templates are never changed.
 
-Save a few examples of each symbol. **Undo Save** removes your most recent template.
-Templates are saved to `templates.json` in the app's Documents folder, so they belong to
-that device. The built-in starters are never saved or undone.
+### How a page is read
 
-### How the page is read
-
-- **Strokes into symbols.** A new stroke joins the previous symbol only if all three hold:
-  it starts within 1 second of the last pen-up, it genuinely overlaps the symbol
-  horizontally (a shared stretch of at least 25% of the narrower width), and the combined
-  strokes match some template well. Otherwise it starts a new symbol. Results are cached
-  per symbol, so replaying the page after undo, redo or erasing is cheap.
-- **Symbols into lines.** Symbols are sorted by their vertical center. A symbol joins the
-  current line if its center falls inside that line's vertical band (every line is at least
-  30 pt tall, so a line starting with `-` still works). Each line reads left to right, and
-  lines continue across pages.
+1. **Strokes → symbols.** A stroke joins the previous symbol if it starts within 1 s of
+   the last pen-up (or crosses it), overlaps it horizontally by at least 25% of the
+   narrower width, and the combined strokes match some template well. A fraction bar never
+   joins the symbol above or below it. Recognition runs in the background, one stroke at a
+   time, in order; results are cached, so undo/redo replays are cheap.
+2. **Recognition.** Each symbol is matched against the templates ($P, below).
+3. **Fractions.** A wide `-` with symbols right above and below becomes `\frac{…}{…}`,
+   nested fractions included.
+4. **Lines.** Symbols are grouped into lines by vertical position (tallest first, so a
+   small raised `²` joins its line instead of starting a new one), each read left to right.
+5. **Scripts and limits.** A symbol smaller than expected next to its base is a
+   superscript or subscript ("expected", because the `x` in `2x` is small but not a
+   script). Limits on `∫ ∑ ∏ ∮` are found by position.
+6. **Re-ranking look-alikes.** Shape matching ignores size and position, so for symbols
+   the recognizer is unsure about, the line's baseline and size break ties: `g` vs `9`,
+   `s` vs `5`, small letters vs digits.
+7. **Text or math.** Apple's Vision framework also reads each line as handwriting (on
+   device). Symbols under a confidently read word become text, the rest inline math:
+   "the area is x²" becomes `the area is $x^{2}$`. Lines without words become display
+   equations `\[ … \]`. The ƒ/¶ button on each row overrides the choice.
 
 ### Files
 
 ```
 InkToLatex/InkToLatex/
   MyApp.swift              App entry point
-  ContentView.swift        The screen: pen hotbar, teach controls, LaTeX panel
-  InkCanvas.swift          PencilKit canvas, notebook pages, undo/redo gestures, stroke detection
-  NoteModel.swift          Templates, grouping strokes into symbols and lines, building the document
+  ContentView.swift        The screen: hotbar, toolbar, notes list, LaTeX panel, chips
+  InkCanvas.swift          PencilKit canvas, notebook pages, zoom, undo/redo gestures
+  NoteModel.swift          Templates, stroke queue, grouping strokes into symbols, the document
+  Layout.swift             Lines, fractions, scripts, limits, spatial re-ranking (pure logic)
+  TextLines.swift          Vision text reading, mixing text and inline math, escaping
   Recognizer.swift         $P recognizer (port of recognizer.js)
   RecognizerChecks.swift   Checks the Swift port against the JavaScript version
-  LatexView.swift          Renders each line with KaTeX in a small web view
-  Theme.swift              Colors, grid paper and button styles (mirrors styles.css)
-  StarterTemplates.json    Built-in templates generated from the HWRT dataset
+  LatexView.swift          Typesets the document with KaTeX in a web view
+  NoteStore.swift          Saving notes: Documents/Notes/notes.json + <id>.drawing
+  TemplatesView.swift      The Templates screen
+  Theme.swift              Colors, grid paper, button styles (mirrors styles.css)
+  StarterTemplates.json    Built-in templates from the HWRT dataset
 ```
+
+Only ink is saved; opening a note replays its strokes, so the LaTeX always reflects your
+current templates. `NoteModel.debugLogging` prints how each page was read to Xcode's
+console. The LaTeX panel loads KaTeX from a CDN; offline it shows the raw LaTeX.
+
+## How recognition works
+
+Both apps use the **$P point-cloud recognizer** (Vatavu, Anthony & Wobbrock, 2012):
+`recognizer.js`, ported line by line to `Recognizer.swift`.
+
+1. **Flatten** a symbol's strokes into one list of points, each tagged with its stroke.
+2. **Resample** to 32 evenly spaced points along the ink, skipping pen-up gaps.
+3. **Normalize**: center at the origin and scale the larger side to 1.
+4. **Match** against each template as unordered point clouds: each point greedily claims
+   the nearest unclaimed point in the other cloud, from several starts in both directions,
+   keeping the best score.
+
+Because shapes are compared as clouds, stroke order and direction don't matter.
+`recognize()` returns a ranked list (lowest score first), which feeds the correction menu
+and the re-ranking.
+
+- **Labels are the LaTeX itself**, so output is mostly joining labels in order.
+- **Templates store raw strokes**, never normalized shapes, so changing resampling or
+  normalization never breaks saved templates. The JSON format is the same in both apps.
+- **The recognizer is pure**: points in, ranked results out. `RecognizerChecks.swift`
+  prints ✅/❌ lines at launch comparing the Swift port with numbers from the JS version.
+- **Early abandoning** skips the rest of a comparison once it's worse than that label's
+  best so far; every label's best score stays exact.
 
 ## The web app
 
-Live at <https://liammatthiasson.github.io/LaTex/>. It has no build step and no
-dependencies to install. It's built for Safari on an iPad with an Apple Pencil, and also
-works with a mouse or a finger.
+Live at <https://liammatthiasson.github.io/LaTex/>. No build step or dependencies. Built
+for Safari on iPad with an Apple Pencil; also works with a mouse or finger.
 
-To run it locally, serve the folder over HTTP (browsers block ES module imports from
-`file://` pages, and `vendor/perfect-freehand.mjs` is one):
+To run it locally, serve the folder over HTTP (ES modules don't load from `file://`):
 
 ```sh
 python3 -m http.server 8000
 ```
 
-Then open <http://localhost:8000>, or `http://<your-computer's-LAN-IP>:8000` from an iPad on
-the same network. KaTeX and the Overpass font load from CDNs, so the first load needs an
-internet connection. If perfect-freehand fails to load, the app still works but draws plain
-lines.
+Then open <http://localhost:8000>, or `http://<your-Mac's-LAN-IP>:8000` from an iPad on
+the same network. KaTeX and the font load from CDNs.
 
-The web app has no starter templates: teach it with **Save** and a label, as above.
-Templates are kept in the browser's `localStorage`. Pens are Pencil (`1`), Pen (`2`) and
-Marker (`3`); the pen only changes how ink looks, since recognition rescales every drawing.
-Its grouping rule is the older, simpler one: a stroke joins the previous symbol if it starts
-within 1 second and overlaps it horizontally. The output is a single line read left to right.
-
-Under the hood it draws on two stacked canvases (`#ink` for finished strokes, `#live` for
-the stroke in progress), uses `getCoalescedEvents()` and `getPredictedEvents()` to capture
-the Pencil's full ~240 Hz input, and smooths strokes with perfect-freehand. Once it sees an
-Apple Pencil, the Pencil always wins over palm and finger touches.
+It's a simpler version: no starter templates (teach it with **Save** and a label; templates
+live in `localStorage`), the older grouping rule (within 1 s and any horizontal overlap),
+and a single line of output with no scripts, fractions or text. Ink is drawn on two
+stacked canvases with coalesced and predicted pointer events and smoothed by
+perfect-freehand; the Pencil always wins over palm and finger touches.
 
 ```
-index.html          Page structure: pen hotbar, two canvases, LaTeX panel, toolbar
+index.html          Page structure
 styles.css          Grid-paper look and layout
-app.js              Drawing, pointer input, pens, symbol grouping, templates, LaTeX output
-recognizer.js       $P recognizer: flatten, resample, normalize, cloud matching
-vendor/             perfect-freehand (MIT), for smooth pressure-sensitive strokes
+app.js              Drawing, pointer input, pens, grouping, templates, LaTeX output
+recognizer.js       $P recognizer
+vendor/             perfect-freehand (MIT)
 ```
 
-When changing web JS or CSS, bump the `?v=` numbers on the tags in `index.html`, because
-Safari on iPad caches aggressively.
+When changing web JS or CSS, bump the `?v=` numbers in `index.html`: Safari on iPad
+caches aggressively.
 
 ## Starter templates (HWRT dataset)
 
-The native app's built-in templates come from the **HWRT database of handwritten
-mathematical symbols** by Martin Thoma. `tools/convert.swift` reads the dataset and keeps
-10 samples, each from a different writer, of 67 symbols chosen for math notes: digits,
-operators and relations, brackets, lowercase letters, Greek letters, and calculus symbols
-and arrows. It writes them to `InkToLatex/InkToLatex/StarterTemplates.json`. Measured on
-the dataset's separate test writers, the starters alone recognize 70% of symbols correctly
-on the first guess and 88% within the top 3. The main confusions are true look-alikes
-(`9`/`g`, `x`/`\times`, `a`/`\alpha`, `5`/`s`).
+`tools/convert.swift` builds `StarterTemplates.json` from the **HWRT database of
+handwritten mathematical symbols** (Martin Thoma): 10 samples, each from a different
+writer, of 68 symbols chosen for math notes. On the dataset's separate test writers, the
+starters alone get 70% right on the first guess and 88% within the top 3. The main
+confusions are true look-alikes (`9`/`g`, `x`/`\times`, `a`/`\alpha`, `5`/`s`).
 
-To regenerate the starters:
+To regenerate:
 
 1. Download the dataset from <https://zenodo.org/records/50022> and extract it into
-   `tools/hwrt/` so that it contains `symbols.csv`, `train-data.csv` and `test-data.csv`.
-   It's about 1.3 GB, so it is gitignored and not part of this repo.
-2. Run, on the Mac:
+   `tools/hwrt/` (`symbols.csv`, `train-data.csv`, `test-data.csv`; ~1.3 GB, gitignored).
+2. On the Mac: `cd tools && swift convert.swift`
 
-   ```sh
-   cd tools
-   swift convert.swift
-   ```
-
-To change which symbols are included, or how many samples of each, edit `wanted` and
-`perSymbol` at the top of `convert.swift`.
+Edit `wanted` and `perSymbol` at the top of `convert.swift` to change the set.
 
 ## Roadmap
 
-1. Get the native app running well on the iPad and tune pen feel.
-2. Export and import templates as `.json` (backups, moving between devices and between the
-   two apps).
-3. Tap-to-correct: tap a symbol, pick from the top-3 guesses, and save the correction as a
-   new template so the app learns from use.
-4. Layout within a line: superscripts, subscripts, fractions and square roots, using symbol
-   size and position.
-5. Later: `.tex` export, a settings screen, and handwritten text alongside math.
+- Export / import templates as `.json` (backups, moving between devices and apps).
+- Square roots and more layout.
+- Save per-line math/text overrides with the note.
+- `.tex` file export and a settings screen.
 
 ## Credits
 
 - **HWRT dataset**: Martin Thoma, *HWRT database of handwritten mathematical symbols*,
-  <https://zenodo.org/records/50022>, licensed under the
-  [Open Database License (ODbL) v1.0](https://opendatacommons.org/licenses/odbl/1-0/).
-  `StarterTemplates.json` is derived from it (a subset of its samples, with timestamps
-  removed) and is shared under the same license. See also M. Thoma, *On-line Recognition
-  of Handwritten Mathematical Symbols*, bachelor's thesis, Karlsruhe Institute of
-  Technology, 2014 ([arXiv:1511.09030](https://arxiv.org/abs/1511.09030)).
+  <https://zenodo.org/records/50022>, [ODbL v1.0](https://opendatacommons.org/licenses/odbl/1-0/).
+  `StarterTemplates.json` is derived from it (a subset of samples, timestamps removed) and
+  shared under the same license. See also M. Thoma, *On-line Recognition of Handwritten
+  Mathematical Symbols*, KIT, 2014 ([arXiv:1511.09030](https://arxiv.org/abs/1511.09030)).
 - **$P recognizer**: Vatavu, R.-D., Anthony, L., Wobbrock, J. O. *Gestures as Point
   Clouds: A $P Recognizer for User Interface Prototypes*. ICMI 2012.
 - [**perfect-freehand**](https://github.com/steveruizok/perfect-freehand) by Steve Ruiz,
-  MIT License (see `vendor/perfect-freehand-LICENSE.txt`), for the web app's ink.
-- [**KaTeX**](https://katex.org) for rendering LaTeX in both apps.
-- Apple's **PencilKit** for the native app's ink and palm rejection.
+  MIT (`vendor/perfect-freehand-LICENSE.txt`).
+- [**KaTeX**](https://katex.org) for rendering LaTeX; Apple's **PencilKit** and
+  **Vision** in the native app.

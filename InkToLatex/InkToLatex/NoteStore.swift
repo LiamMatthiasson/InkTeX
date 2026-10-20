@@ -1,12 +1,7 @@
-// Saving notes. Each note is a PencilKit drawing stored as its own file, plus one small
-// index file listing every note's title and when it was last changed:
-//
+// Notes on disk:
 //   Documents/Notes/notes.json        [{ id, title, modified }, ...]
-//   Documents/Notes/<id>.drawing      the ink (PKDrawing's own format)
-//
-// Only the INK is saved, not the LaTeX: opening a note replays its strokes through the
-// recognizer, so the LaTeX always reflects your current templates and rules. (The ink
-// keeps each stroke's timing, so symbols group exactly as when you wrote them.)
+//   Documents/Notes/<id>.drawing      the ink (PKDrawing)
+// Only ink is saved; opening a note replays its strokes to rebuild the LaTeX.
 
 import Foundation
 import Observation
@@ -21,11 +16,9 @@ struct NoteInfo: Codable, Identifiable {
 
 @Observable
 final class NoteStore {
-    /// Every note, most recently changed first.
-    private(set) var notes: [NoteInfo] = []
+    private(set) var notes: [NoteInfo] = []   // most recent first
 
-    /// What each note looked like when last saved, so saving an unchanged note does
-    /// nothing (just opening a note shouldn't move it to the top of the list).
+    /// So saving an unchanged note does nothing (and doesn't move it to the top)
     private var lastSaved: [UUID: Data] = [:]
 
     private var folder: URL { URL.documentsDirectory.appending(path: "Notes") }
@@ -40,7 +33,6 @@ final class NoteStore {
         }
     }
 
-    /// A new, empty note at the top of the list.
     func create() -> NoteInfo {
         let title = "Note " + Date.now.formatted(date: .abbreviated, time: .shortened)
         let note = NoteInfo(id: UUID(), title: title, modified: .now)
@@ -49,7 +41,6 @@ final class NoteStore {
         return note
     }
 
-    /// A note's ink (empty if it has never been saved).
     func drawing(for id: UUID) -> PKDrawing {
         guard let data = try? Data(contentsOf: drawingURL(id)),
               let drawing = try? PKDrawing(data: data) else { return PKDrawing() }
@@ -57,12 +48,12 @@ final class NoteStore {
         return drawing
     }
 
-    /// Writes a note's ink to disk (if it changed) and moves the note to the top.
+    /// Writes the ink if it changed and moves the note to the top.
     func save(_ drawing: PKDrawing, for id: UUID) {
         let data = drawing.dataRepresentation()
         guard data != lastSaved[id] else { return }
         do {
-            try data.write(to: drawingURL(id), options: .atomic)   // all or nothing
+            try data.write(to: drawingURL(id), options: .atomic)
             lastSaved[id] = data
             if let i = notes.firstIndex(where: { $0.id == id }) {
                 var note = notes.remove(at: i)

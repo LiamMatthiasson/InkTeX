@@ -1,17 +1,9 @@
-// The writing surface: Apple's PencilKit canvas with grid paper behind it, wrapped
-// for SwiftUI. PencilKit handles low-latency ink, pressure and palm rejection.
-// On top of that this file adds:
-//   - notebook pages (US Letter shape) stacked vertically, with a new blank page
-//     appearing whenever you write on the last one
-//   - pinch to zoom (the pages zoom along with the ink)
-//   - two-finger double-tap = undo, three-finger double-tap = redo
-//   - an eraser with an adjustable size
-// and tells the model about every finished stroke.
+// The writing surface: PencilKit (ink, pressure, palm rejection) over notebook pages,
+// with zoom, undo/redo gestures, and a callback for every finished stroke.
 
 import SwiftUI
 import PencilKit
 
-/// The tools in the hotbar: three pens (from the web version) and an eraser.
 enum PenKind: String, CaseIterable, Identifiable {
     case pencil, pen, marker, eraser
 
@@ -26,7 +18,6 @@ enum PenKind: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Ink color for each pen (same colors as the web version)
     var color: Color {
         switch self {
         case .pencil: Color(hex: 0x5A6472)
@@ -36,7 +27,7 @@ enum PenKind: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Thickness of the sample squiggle on each hotbar button
+    /// The hotbar squiggle's thickness
     var sampleWidth: CGFloat {
         switch self {
         case .pencil: 1.75
@@ -46,7 +37,6 @@ enum PenKind: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Starting size for each tool (the slider can change it)
     var defaultWidth: CGFloat {
         switch self {
         case .pencil: 3
@@ -56,26 +46,22 @@ enum PenKind: String, CaseIterable, Identifiable {
         }
     }
 
-    /// How far the size slider goes for this tool
     var widthRange: ClosedRange<CGFloat> {
         self == .eraser ? 6...80 : 1...20
     }
 
-    /// The PencilKit tool for this hotbar item, at a given size
     func pkTool(width: CGFloat) -> PKTool {
         switch self {
         case .pencil: PKInkingTool(.pencil, color: UIColor(color), width: width)
         case .pen: PKInkingTool(.pen, color: UIColor(color), width: width)
         case .marker: PKInkingTool(.monoline, color: UIColor(color), width: width)
-        // .bitmap erases like a real eraser (it can cut strokes in half);
-        // .vector would delete whole strokes at a touch instead.
+        // .bitmap can cut strokes in half; .vector deletes whole strokes
         case .eraser: PKEraserTool(.bitmap, width: width)
         }
     }
 }
 
-/// The PencilKit canvas with iPadOS's own three-finger edit gestures turned off
-/// (three-finger double-tap = undo, three-finger swipes), so ours get those touches.
+/// iPadOS's own three-finger edit gestures off, so ours get those touches.
 final class NoteCanvasView: PKCanvasView {
     override var editingInteractionConfiguration: UIEditingInteractionConfiguration {
         .none
@@ -85,36 +71,29 @@ final class NoteCanvasView: PKCanvasView {
 /// One finished stroke, in page coordinates (unaffected by zoom).
 struct StrokeInfo {
     var points: [Point]
-    var start: TimeInterval   // when the pen touched down
-    var end: TimeInterval     // when it lifted
+    var start: TimeInterval
+    var end: TimeInterval
 }
 
 // MARK: - Page layout
 
-/// Where the pages sit, in page coordinates (the coordinates strokes are stored in).
-/// Everything is measured unzoomed; zooming just scales it on screen.
+/// In page coordinates (unzoomed), the coordinates strokes are stored in.
 enum PageLayout {
     static let pageWidth: CGFloat = 768
-    static let pageHeight: CGFloat = pageWidth * 11 / 8.5   // US Letter shape (A4: 297 / 210)
-    static let gap: CGFloat = 28            // space between pages, and around them
+    static let pageHeight: CGFloat = pageWidth * 11 / 8.5   // US Letter
+    static let gap: CGFloat = 28
     static let contentWidth: CGFloat = pageWidth + 2 * gap
-
-    /// Distance from the top of one page to the top of the next
     static let pageStride: CGFloat = pageHeight + gap
 
-    /// Page i's rectangle (page 0 is the first)
     static func pageRect(_ i: Int) -> CGRect {
         CGRect(x: gap, y: gap + CGFloat(i) * pageStride, width: pageWidth, height: pageHeight)
     }
 
-    /// Total height needed for this many pages
     static func contentHeight(pages: Int) -> CGFloat {
         gap + CGFloat(pages) * pageStride
     }
 
-    /// How many pages to show: every page that has ink, plus one blank page after the
-    /// last one. A brand-new notebook has a single page; writing on the last page adds
-    /// the next, like Notability.
+    /// Every page with ink, plus one blank page after.
     static func pageCount(for drawing: PKDrawing) -> Int {
         let bounds = drawing.bounds
         guard !bounds.isNull, !bounds.isEmpty else { return 1 }
@@ -125,14 +104,13 @@ enum PageLayout {
 
 // MARK: - The pages behind the ink
 
-/// Draws the desk, the paper pages and their grid, lined up with the canvas's
-/// current zoom and scroll position.
+/// Desk, pages and grid, lined up with the canvas's zoom and scroll.
 final class PageBackgroundView: UIView {
     var zoom: CGFloat = 1 { didSet { if zoom != oldValue { setNeedsDisplay() } } }
     var offset: CGPoint = .zero { didSet { if offset != oldValue { setNeedsDisplay() } } }
     var pageCount = 1 { didSet { if pageCount != oldValue { setNeedsDisplay() } } }
 
-    private let deskColor = UIColor(Color(hex: 0xC9D0C2))     // the "table" around the pages
+    private let deskColor = UIColor(Color(hex: 0xC9D0C2))
     private let paperColor = UIColor(Color.paper)
     private let fineLine = UIColor(Color.grid)
     private let majorLine = UIColor(Color.gridMajor)
@@ -158,9 +136,8 @@ final class PageBackgroundView: UIView {
         for i in 0..<pageCount {
             let page = PageLayout.pageRect(i)
             let onScreen = toScreen(page)
-            guard onScreen.intersects(bounds) else { continue }   // only draw visible pages
+            guard onScreen.intersects(bounds) else { continue }
 
-            // The sheet of paper, with a soft shadow
             context.saveGState()
             context.setShadow(offset: CGSize(width: 0, height: 2), blur: 8,
                               color: UIColor.black.withAlphaComponent(0.18).cgColor)
@@ -168,7 +145,6 @@ final class PageBackgroundView: UIView {
             context.fill(onScreen)
             context.restoreGState()
 
-            // Its grid, kept inside the page
             context.saveGState()
             context.clip(to: onScreen)
             drawGrid(context, page: page, every: 20, color: fineLine)
@@ -178,7 +154,7 @@ final class PageBackgroundView: UIView {
     }
 
     private func drawGrid(_ context: CGContext, page: CGRect, every step: CGFloat, color: UIColor) {
-        guard step * zoom >= 4 else { return }        // lines this dense would just be noise
+        guard step * zoom >= 4 else { return }        // too dense
 
         var x = page.minX
         while x <= page.maxX {
@@ -200,14 +176,13 @@ final class PageBackgroundView: UIView {
     }
 }
 
-/// Holds the pages (behind) and the PencilKit canvas (in front).
+/// Pages behind, PencilKit canvas in front.
 final class InkContainerView: UIView {
     let pages = PageBackgroundView()
     let canvas = NoteCanvasView()
     private var didFirstLayout = false
 
-    // Room for the hotbar at the top and the toolbar at the bottom, so the first
-    // page starts below the hotbar and you can scroll the last one above the toolbar.
+    // Room for the hotbar and toolbar
     static let topInset: CGFloat = 84
     static let bottomInset: CGFloat = 90
 
@@ -227,8 +202,7 @@ final class InkContainerView: UIView {
         canvas.frame = bounds
         guard bounds.width > 0 else { return }
 
-        // "Fit" zoom: the page (plus its margins) exactly fills the screen's width.
-        // You can zoom in from there to 4x, but not out past it.
+        // "Fit" zoom: the page fills the width; zoom in up to 4x from there
         let fit = bounds.width / PageLayout.contentWidth
         if abs(canvas.minimumZoomScale - fit) > 0.0001 {
             let wasAtFit = canvas.zoomScale <= canvas.minimumZoomScale + 0.001
@@ -248,7 +222,6 @@ final class InkContainerView: UIView {
         syncPages()
     }
 
-    /// Make the scrollable area exactly as tall as the pages (which grow as you write).
     func updateContentSize() {
         let count = PageLayout.pageCount(for: canvas.drawing)
         pages.pageCount = count
@@ -261,7 +234,6 @@ final class InkContainerView: UIView {
         canvas.setContentOffset(CGPoint(x: 0, y: -canvas.contentInset.top), animated: false)
     }
 
-    /// Keep the pages lined up with the ink after any zoom or scroll.
     func syncPages() {
         pages.zoom = canvas.zoomScale
         pages.offset = canvas.contentOffset
@@ -270,8 +242,7 @@ final class InkContainerView: UIView {
 
 // MARK: - SwiftUI wrapper
 
-/// What the canvas should show. Bump `token` to load `drawing` (a saved note, or an
-/// empty one to erase). Compared by token alone: "load this now" happens once per bump.
+/// Bump `token` to load `drawing` (a saved note, or an empty one to erase).
 struct CanvasLoad {
     var token = 0
     var drawing = PKDrawing()
@@ -280,10 +251,10 @@ struct CanvasLoad {
 struct InkCanvas: UIViewRepresentable {
     var pen: PenKind
     var width: CGFloat
-    var load: CanvasLoad                          // bump its token to show a different drawing
-    var onStroke: (StrokeInfo) -> Void            // a new stroke was drawn
-    var onStrokesReplaced: ([StrokeInfo]) -> Void // undo/redo/load changed earlier strokes: here they all are
-    var onDrawingChanged: (PKDrawing) -> Void     // any change at all (for saving)
+    var load: CanvasLoad
+    var onStroke: (StrokeInfo) -> Void            // one new stroke
+    var onStrokesReplaced: ([StrokeInfo]) -> Void // undo/redo/load: all strokes
+    var onDrawingChanged: (PKDrawing) -> Void     // any change (for saving)
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -293,25 +264,21 @@ struct InkCanvas: UIViewRepresentable {
         let container = InkContainerView()
         let canvas = container.canvas
 
-        // .default follows the iPad's own setting: with an Apple Pencil paired, only the
-        // Pencil draws, and fingers pan and zoom. In the simulator the mouse draws.
+        // Follows the iPad's setting: with a Pencil paired, fingers pan and zoom
         canvas.drawingPolicy = .default
-        canvas.backgroundColor = .clear          // let the grid show through
+        canvas.backgroundColor = .clear
         canvas.isOpaque = false
         canvas.tool = pen.pkTool(width: width)
         canvas.delegate = context.coordinator
 
-        // Pinch to zoom (the zoom range is set in InkContainerView, from the screen width)
         canvas.bouncesZoom = true
         canvas.alwaysBounceVertical = true
 
-        // Two fingers, tapped twice: undo
         let undoTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.undo))
         undoTap.numberOfTouchesRequired = 2
         undoTap.numberOfTapsRequired = 1
         canvas.addGestureRecognizer(undoTap)
 
-        // Three fingers, tapped twice: redo
         let redoTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.redo))
         redoTap.numberOfTouchesRequired = 3
         redoTap.numberOfTapsRequired = 1
@@ -327,19 +294,15 @@ struct InkCanvas: UIViewRepresentable {
 
         if context.coordinator.loadToken != load.token {
             context.coordinator.loadToken = load.token
-            context.coordinator.knownStrokes = []               // the model starts over too
-            // PencilKit reports this change right away, in the middle of SwiftUI's update,
-            // where changing the model isn't allowed. Ignore that report; the deferred
-            // call below hands the strokes over just after the update instead.
+            context.coordinator.knownStrokes = []
+            // PencilKit reports this change mid-update, where changing the model isn't
+            // allowed: ignore it and hand the strokes over just after the update instead.
             context.coordinator.isLoading = true
             container.canvas.drawing = load.drawing
             context.coordinator.isLoading = false
-            container.canvas.undoManager?.removeAllActions()    // undo can't cross into another note
-            container.updateContentSize()                       // as many pages as the note needs
+            container.canvas.undoManager?.removeAllActions()    // undo can't cross notes
+            container.updateContentSize()
             container.scrollToTop()
-            // Hand the loaded strokes to the model, just after this SwiftUI update finishes
-            // (changing the model in the middle of one isn't allowed). If PencilKit also
-            // reports the change itself, the second report finds nothing new.
             let coordinator = context.coordinator
             let canvas = container.canvas
             DispatchQueue.main.async {
@@ -352,8 +315,8 @@ struct InkCanvas: UIViewRepresentable {
         var parent: InkCanvas
         var loadToken: Int
         weak var container: InkContainerView?
-        var knownStrokes: [PKStroke] = []   // the strokes we've already told the model about
-        var isLoading = false               // true while updateUIView swaps in a drawing
+        var knownStrokes: [PKStroke] = []   // already told to the model
+        var isLoading = false
 
         init(parent: InkCanvas) {
             self.parent = parent
@@ -372,29 +335,24 @@ struct InkCanvas: UIViewRepresentable {
 
         // MARK: Drawing changes
 
-        // PencilKit calls this whenever the drawing changes: a stroke finished, or undo/redo.
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             guard !isLoading else { return }    // see updateUIView
-            container?.updateContentSize()      // add a blank page if you wrote on the last one
+            container?.updateContentSize()
 
             let strokes = canvasView.drawing.strokes
 
-            // The common case: exactly one stroke was added at the end. Tell the model about it.
+            // One stroke appended: recognize it. Anything else: replay everything.
             if strokes.count == knownStrokes.count + 1, isSamePrefix(strokes, knownStrokes) {
                 parent.onStroke(Coordinator.info(for: strokes[strokes.count - 1]))
             } else if strokes.count != knownStrokes.count || !isSamePrefix(strokes, knownStrokes) {
-                // Anything else (undo removed a stroke, redo restored one in the middle...):
-                // hand over the full list and let the model rebuild from scratch.
                 parent.onStrokesReplaced(strokes.map { Coordinator.info(for: $0) })
             }
             knownStrokes = strokes
             parent.onDrawingChanged(canvasView.drawing)
         }
 
-        /// Do the first `known.count` strokes match? Compared by when each stroke was created
-        /// AND where it sits, so a stroke the eraser cut into counts as changed. (Not by
-        /// point count: PencilKit adjusts that slightly after a stroke is drawn, which made
-        /// every stroke look "changed" and replay the whole page.)
+        /// Compared by creation date and bounds (an erased stroke changes). Not by point
+        /// count: PencilKit adjusts that after drawing, which replayed the whole page.
         private func isSamePrefix(_ strokes: [PKStroke], _ known: [PKStroke]) -> Bool {
             guard strokes.count >= known.count else { return false }
             for i in known.indices {
@@ -409,7 +367,6 @@ struct InkCanvas: UIViewRepresentable {
                 && abs(a.maxX - b.maxX) < 1 && abs(a.maxY - b.maxY) < 1
         }
 
-        /// Convert a PencilKit stroke to our Point list, in page coordinates.
         static func info(for stroke: PKStroke) -> StrokeInfo {
             var points: [Point] = []
             for p in stroke.path {
@@ -421,7 +378,7 @@ struct InkCanvas: UIViewRepresentable {
             return StrokeInfo(points: points, start: start, end: end)
         }
 
-        // MARK: Zoom and scroll: keep the pages lined up with the ink
+        // MARK: Zoom and scroll
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
             container?.syncPages()

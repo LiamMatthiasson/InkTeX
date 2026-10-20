@@ -1,6 +1,4 @@
-// Shows the note as ONE document, the way it looks once compiled: paragraphs of text
-// with inline math, and equations on their own lines, in LaTeX's own font. Rendered with
-// KaTeX (the same library as the web version) inside a small embedded web view.
+// The note typeset as one document with KaTeX, in a small web view.
 
 import SwiftUI
 import WebKit
@@ -17,7 +15,6 @@ struct LatexView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        // Only reload when the document actually changed
         guard context.coordinator.shown != blocks else { return }
         context.coordinator.shown = blocks
         webView.loadHTMLString(Self.page(for: blocks), baseURL: nil)
@@ -29,11 +26,8 @@ struct LatexView: UIViewRepresentable {
         var shown: [DocBlock]? = nil
     }
 
-    /// A tiny web page that typesets the document.
     static func page(for blocks: [DocBlock]) -> String {
-        // Each block as a list of strings, for JavaScript:
-        //   ["d", latex]                          a display equation
-        //   ["p", "text", words, "math", latex…]  a paragraph, part by part
+        // ["d", latex] or ["p", "text", words, "math", latex, …]
         let encoded: [[String]] = blocks.map { block in
             switch block {
             case .display(let latex):
@@ -84,14 +78,14 @@ struct LatexView: UIViewRepresentable {
               }
             }
             for (const block of blocks) {
-              if (block[0] === 'd') {                  // an equation on its own line
+              if (block[0] === 'd') {
                 const el = document.createElement('div');
                 el.className = 'display';
                 doc.appendChild(el);
                 math(block[1], el, true);
                 continue;
               }
-              const p = document.createElement('p');   // a paragraph: words and inline math
+              const p = document.createElement('p');
               doc.appendChild(p);
               for (let i = 1; i < block.length; i += 2) {
                 if (i > 1) p.appendChild(document.createTextNode(' '));

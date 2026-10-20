@@ -1,24 +1,15 @@
-//
-//  Layout.swift
-//  InkToLatex
-//
-// How symbols sit relative to each other: lines, baselines, sizes.
-// Pure logic, like Recognizer.swift: data in, answers out.
-//
-// The recognizer only sees a symbol's SHAPE: normalize() scales and centers every
-// drawing, so size and position are thrown away. This file brings them back, from
-// the symbol's line, to break ties between look-alikes:
-//   - g y p q hang below the line; 9 and most others don't
-//   - small letters (a c e o s x …) are about half as tall as digits
+// How symbols sit relative to each other: lines, fractions, scripts, and size/position
+// re-ranking. Pure logic, like Recognizer.swift. normalize() throws size and position
+// away; this file brings them back to break ties (g/9, s/5, x vs digits).
 
 import Foundation
 
 struct LineMetrics {
-    let baseline: Double        // where symbols' bottoms typically sit (y grows downward)
-    let typicalHeight: Double   // a typical symbol's height (for "how far below the line")
-    let tallHeight: Double?     // a typical TALL symbol's height, if the line has any
-                                // (needed for "is this small?"; see measureLine)
+    let baseline: Double        // y grows downward
+    let typicalHeight: Double
+    let tallHeight: Double?     // nil if the line has no confident tall symbols
 }
+
 // MARK: - Median
 
 /// The middle value of a list (the average of the two middle values if the count is even).
@@ -33,41 +24,26 @@ func median(_ values: [Double]) -> Double {
 
 // MARK: - Which symbols are which
 
-/// Hang below the baseline
 let descenders: Set<String> = ["g", "y", "p", "q", "j", "\\mu", "\\beta", "\\phi"]
-/// Float above the baseline (their bottoms say nothing about where the line is)
+/// Their bottoms say nothing about where the line is
 let floaters: Set<String> = ["-", "=", "\\cdot", "\\approx", "\\sim", "+", "\\times", "\\div", "\\pm"]
 /// About half as tall as a digit
 let smallLetters: Set<String> = ["a", "c", "e", "m", "n", "o", "r", "s", "u", "v", "w", "x", "z",
                                  "\\alpha", "\\omega", "\\sigma", "\\pi"]
-/// Tiny on purpose: a dot. Anything bigger is something else (often a small 0)
 let tinySymbols: Set<String> = ["\\cdot", "."]
-/// Full height: the reference for "how tall is tall" on a line
 let tallSymbols: Set<String> = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
                                 "b", "d", "f", "h", "k", "\\delta", "\\theta", "\\lambda"]
 
 // MARK: - Measuring a line
 
-/// What a "normal" symbol on a line looks like.
-
-
-/// Is the recognizer sure about this symbol? (Its best guess is clearly ahead.)
+/// The best guess is clearly ahead of the second.
 func isConfident(_ symbol: Symbol) -> Bool {
     symbol.guesses.count < 2 || symbol.guesses[1].score - symbol.guesses[0].score >= unsureMargin
 }
 
-/// Measures a line from the symbols we can TRUST: ones the recognizer is confident about.
-/// (Unsure symbols are the ones we're trying to fix, so their guesses can't be used to
-/// measure the line: a "g" misread as "9" would count as sitting on the line and drag
-/// the baseline down.)
-///
-/// The baseline is the median bottom of trusted symbols that SHOULD sit on the line:
-/// no descenders (they'd drag it down; think of "yay") and no floaters like "-".
-/// Returns nil if there are none: nothing to measure the line by.
-///
-/// For size, "typical height" alone can mislead: on a line like "x + y" the typical symbol
-/// is a small letter, so x would look full-size. So size checks compare against the
-/// median height of trusted TALL symbols (digits, b, d, h…), and only when there are some.
+/// Measures a line from confident symbols only (a "g" misread as "9" would drag the
+/// baseline down). Baseline = median bottom of non-descenders, non-floaters. Size is
+/// compared against TALL symbols, since in "x + y" the typical symbol is small.
 func measureLine(_ line: [Symbol]) -> LineMetrics? {
     let sitters = line.filter {
         isConfident($0) && !descenders.contains($0.label) && !floaters.contains($0.label)
@@ -89,15 +65,14 @@ func measureLine(_ line: [Symbol]) -> LineMetrics? {
 // MARK: - Measuring a symbol against its line
 
 struct SymbolMeasure {
-    let relativeHeight: Double?   // height ÷ a tall symbol's height (nil: no tall reference)
-    let drop: Double              // how far the bottom is below the baseline ÷ typical height
-                                  // (≈0 on the line, ≈0.3+ hanging below, negative = above)
-    let size: Double              // height ÷ typical height (a dot ≈ 0.1, a letter ≈ 1)
+    let relativeHeight: Double?   // height ÷ tall height
+    let drop: Double              // (bottom - baseline) ÷ typical height: ≈0 on the line, 0.3+ hanging
+    let size: Double              // height ÷ typical height
 }
 
 func measure(_ symbol: Symbol, on line: LineMetrics) -> SymbolMeasure {
     let symbolHeight = symbol.bottom - symbol.top
-    let relativeHeight = line.tallHeight.map { symbolHeight / $0 }   // nil stays nil
+    let relativeHeight = line.tallHeight.map { symbolHeight / $0 }
     let drop = (symbol.bottom - line.baseline) / line.typicalHeight
     return SymbolMeasure(relativeHeight: relativeHeight, drop: drop,
                          size: symbolHeight / line.typicalHeight)
@@ -105,43 +80,37 @@ func measure(_ symbol: Symbol, on line: LineMetrics) -> SymbolMeasure {
 
 // MARK: - The rules
 
-/// How much worse a guess gets when it doesn't fit (scores: lower = better).
+/// Added to a guess's score per broken expectation (lower = better).
 let mismatchPenalty = 0.5
 
-/// Adds up the penalties for guessing `label` for a symbol measured like this.
 func penalty(for label: String, _ m: SymbolMeasure) -> Double {
     var total = 0.0
 
-    // Descenders must hang below the line...
+    // Descenders hang below the line; sitters don't
     if descenders.contains(label) && m.drop < 0.15 { total += mismatchPenalty }
-    // ...and symbols that sit on the line must not (floaters are free to be anywhere).
     if !descenders.contains(label) && !floaters.contains(label) && m.drop > 0.3 {
         total += mismatchPenalty
     }
 
-    // Dots are tiny; a "dot" a third the size of a letter is really a small 0 or o.
-    // And a real symbol isn't that tiny (floaters like "-" are flat, so they're exempt).
+    // Dots are tiny, and nothing else is (flat floaters exempt)
     if tinySymbols.contains(label) && m.size > 0.35 { total += mismatchPenalty }
     if !tinySymbols.contains(label) && !floaters.contains(label) && m.size < 0.15 {
         total += mismatchPenalty
     }
 
-    // Size, only when the line has a tall reference to compare against
     if let h = m.relativeHeight {
-        if smallLetters.contains(label) && h > 0.85 { total += mismatchPenalty }   // too big for a small letter
-        if tallSymbols.contains(label) && h < 0.65 { total += mismatchPenalty }    // too small for a digit/tall letter
+        if smallLetters.contains(label) && h > 0.85 { total += mismatchPenalty }
+        if tallSymbols.contains(label) && h < 0.65 { total += mismatchPenalty }
     }
     return total
 }
 
 // MARK: - Re-ranking
 
-/// Only step in when the recognizer is unsure: the top two guesses are this close.
+/// The top two guesses closer than this = unsure.
 let unsureMargin = 0.3
 
-/// Re-ranks one symbol's guesses using where it sits on its line.
-/// Spatial rules are a tie-breaker, not an override: a clear winner is left alone,
-/// and only the top 3 guesses are reconsidered.
+/// A tie-breaker, not an override: only unsure symbols, only among their top 3.
 func rerank(_ guesses: [Match], _ m: SymbolMeasure) -> [Match] {
     guard guesses.count >= 2,
           guesses[1].score - guesses[0].score < unsureMargin else { return guesses }
@@ -150,13 +119,8 @@ func rerank(_ guesses: [Match], _ m: SymbolMeasure) -> [Match] {
     return top.sorted { $0.score < $1.score } + guesses.dropFirst(3)
 }
 
-/// Applies the spatial rules to a whole line: first finds its superscripts and
-/// subscripts, then re-ranks the NORMAL symbols' guesses by size and position.
-/// Scripts are small and raised/lowered on purpose, so they'd break the size and
-/// baseline rules: they're left out of measuring the line and aren't re-ranked.
-///
-/// Then it looks for scripts AGAIN: re-ranking can change a label (a tiny "·" that's
-/// really a small subscript 0), and that changes what counts as a script.
+/// findScripts → re-rank normal symbols (scripts would break the size rules) →
+/// fixLoneBar → findScripts again, since re-ranking can change a label.
 func applySpatialContext(_ line: [Symbol]) -> [Symbol] {
     var marked = findScripts(line)
 
@@ -173,8 +137,7 @@ func applySpatialContext(_ line: [Symbol]) -> [Symbol] {
     return findScripts(marked)
 }
 
-/// "|" comes in pairs (|x|). A line with exactly one "|" almost certainly has a 1 that
-/// was misread, so if "1" is among that symbol's top 3 guesses, it becomes a 1.
+/// "|" comes in pairs, so a lone "|" with "1" in its top 3 becomes a 1.
 func fixLoneBar(_ line: [Symbol]) -> [Symbol] {
     let bars = line.indices.filter { line[$0].label == "|" }
     guard bars.count == 1, let i = bars.first,
@@ -186,15 +149,9 @@ func fixLoneBar(_ line: [Symbol]) -> [Symbol] {
 
 // MARK: - Lines
 
-/// Every line is at least as tall as a typical symbol on the page, so a line that
-/// starts with a flat "-" still catches the digits written next to it. Measured from
-/// the page, not a fixed number of points, so it works at any zoom: written zoomed in,
-/// your letters are only ~10 points tall.
-/// A small symbol may sit this far outside a line (× the line's height) and still join
-/// it: a raised ² can sit completely above its x.
+/// How far (× line height) a small symbol may sit outside a line and still join it.
 let scriptLineMargin = 0.5
 
-/// One line while we build it: its vertical band and its symbols.
 struct LineBand {
     var top: Double
     var bottom: Double
@@ -202,19 +159,16 @@ struct LineBand {
     var height: Double { bottom - top }
 }
 
-/// Groups symbols into lines, top to bottom; each line reads left to right.
-///
-/// TALLEST symbols go first, so normal-size symbols set up each line's band before the
-/// small ones arrive. A symbol joins a line if its center is inside the band; a SMALL
-/// symbol (under 70% of the line's height) may also be up to half a line-height above or
-/// below it. That's how a raised ² finds its x instead of starting a line of its own.
+/// Lines top to bottom, each left to right. Tallest symbols go first to set up the
+/// bands; a small symbol may join up to half a line-height outside one (a raised ²).
+/// Min line height is the page's median symbol height, so it works at any zoom.
 func groupIntoLines(_ symbols: [Symbol]) -> [[Symbol]] {
     let tallestFirst = symbols.sorted { $0.height > $1.height }
-    let minLineHeight = median(symbols.map { $0.height })   // a typical symbol's height
+    let minLineHeight = median(symbols.map { $0.height })
     var bands: [LineBand] = []
 
     for symbol in tallestFirst {
-        // How far the symbol's center is outside a band (0 = inside it)
+        // 0 = center inside the band
         func distance(_ band: LineBand) -> Double {
             max(band.top - symbol.centerY, symbol.centerY - band.bottom, 0)
         }
@@ -229,12 +183,12 @@ func groupIntoLines(_ symbols: [Symbol]) -> [[Symbol]] {
         if let i = closest {
             let inside = distance(bands[i]) == 0
             bands[i].symbols.append(symbol)
-            if inside {                       // only symbols inside the band widen it,
-                bands[i].top = min(bands[i].top, symbol.top)          // so scripts can't
-                bands[i].bottom = max(bands[i].bottom, symbol.bottom) // drag it into the
-            }                                                          // next line
+            if inside {                       // scripts don't widen the band
+                bands[i].top = min(bands[i].top, symbol.top)
+                bands[i].bottom = max(bands[i].bottom, symbol.bottom)
+            }
         } else {
-            let half = max(symbol.height, minLineHeight) / 2          // a new line
+            let half = max(symbol.height, minLineHeight) / 2
             bands.append(LineBand(top: min(symbol.top, symbol.centerY - half),
                                   bottom: max(symbol.bottom, symbol.centerY + half),
                                   symbols: [symbol]))
@@ -246,18 +200,14 @@ func groupIntoLines(_ symbols: [Symbol]) -> [[Symbol]] {
 
 // MARK: - Fractions
 //
-// A fraction is a bar (a wide "-") with symbols right above it and right below it. It's
-// found on the whole page BEFORE lines are grouped: numerator, bar and denominator sit
-// on three different heights, so line grouping alone would split them into three lines.
-// The pieces are combined into one tall Symbol labelled \frac{…}{…}, which then sits
-// on its line like any other symbol: x = \frac{a + b}{2}.
+// A wide "-" with symbols right above AND below. Found on the whole page before line
+// grouping (which would split it into three lines) and combined into one Symbol
+// labelled \frac{…}{…}.
 
-/// Combines every fraction on the page into a single symbol.
-/// Shortest bars go first, so a fraction inside a bigger fraction's numerator is built
-/// first and then becomes part of the bigger one.
+/// Shortest bars first, so nested fractions are built inside out.
 func combineFractions(_ symbols: [Symbol]) -> [Symbol] {
     guard symbols.count >= 3 else { return symbols }
-    let typical = median(symbols.map { $0.height })   // a typical symbol's height
+    let typical = median(symbols.map { $0.height })
     var remaining = symbols
 
     let bars = symbols
@@ -270,21 +220,18 @@ func combineFractions(_ symbols: [Symbol]) -> [Symbol] {
         let slack = 0.1 * (bar.right - bar.x)
         let others = remaining.filter { $0.id != bar.id }
 
-        /// Roughly centered over the bar, left to right
         func overBar(_ s: Symbol) -> Bool {
             let centerX = (s.x + s.right) / 2
             return centerX > bar.x - slack && centerX < bar.right + slack
         }
 
-        // Right above it: bottoms just over the bar. Right below: tops just under it.
         var above = others.filter { overBar($0) && $0.bottom <= barY + 0.15 * typical
                                                  && $0.bottom >= barY - 0.8 * typical }
         var below = others.filter { overBar($0) && $0.top >= barY - 0.15 * typical
                                                  && $0.top <= barY + 0.8 * typical }
         guard !above.isEmpty, !below.isEmpty else { continue }   // a plain minus
 
-        // Then whatever shares a row with those (the raised 2 of an x² in the numerator)
-        // (still over the bar, so the "=" in "x = ½" can't sneak in)
+        // Plus whatever shares their row (the ² of an x² in the numerator)
         above += sameRow(as: above, from: others, typical: typical) { overBar($0) && $0.bottom <= barY }
         below += sameRow(as: below, from: others, typical: typical) { overBar($0) && $0.top >= barY }
 
@@ -307,15 +254,12 @@ func combineFractions(_ symbols: [Symbol]) -> [Symbol] {
     return remaining
 }
 
-/// A fraction bar: recognized as "-" and at least 60% as wide as a typical symbol is tall
-/// (a short dash is a minus). It only BECOMES a fraction if something sits right above
-/// and right below it.
+/// A "-" at least 60% as wide as a typical symbol is tall.
 func isFractionBar(_ symbol: Symbol, typical: Double) -> Bool {
     symbol.label == "-" && symbol.children.isEmpty && (symbol.right - symbol.x) >= 0.6 * typical
 }
 
-/// Symbols that share a row with `group` (their middles fall within the group's height,
-/// give or take half a symbol) and pass `keep` (over the bar, on the right side of it).
+/// Symbols whose middles fall within the group's height (± half a symbol) and pass `keep`.
 private func sameRow(as group: [Symbol], from pool: [Symbol], typical: Double,
                      keep: (Symbol) -> Bool) -> [Symbol] {
     let ids = Set(group.map { $0.id })
@@ -328,36 +272,30 @@ private func sameRow(as group: [Symbol], from pool: [Symbol], typical: Double,
 
 // MARK: - Superscripts and subscripts
 //
-// A script is a symbol that is SMALLER THAN IT SHOULD BE next to the symbol before it
-// (its base). "Should be" is the key: in "2x" the x is smaller than the 2, but small
-// letters always are, so it's normal. In "e₀" the 0 is smaller than the e even though
-// digits are normally taller: it shrank, so it's a script. Then up or down picks ^ or _.
+// A script is SMALLER THAN EXPECTED next to its base: the x in "2x" is small because
+// small letters are; the 0 in "e₀" shrank. Up or down then picks ^ or _.
 
 enum ScriptRole {
-    case normal, sup, sub   // sup = superscript (^), sub = subscript (_)
+    case normal, sup, sub   // "subscript" is a Swift keyword
 }
 
-/// Brackets: about digit height, so (a+b)² has a base with a known size
 let brackets: Set<String> = ["(", ")", "[", "]", "\\{", "\\}"]
 
-/// Big operators: they take limits, either at their top and bottom corners (how ∫ is
-/// usually written) or directly above and below (how ∑ and ∏ are).
+/// Take limits at their corners (∫) or directly above/below (∑, ∏).
 let bigOperators: Set<String> = ["\\int", "\\oint", "\\sum", "\\prod"]
 
-/// Shrunk below this = a script. Your scripts measured 0.29–0.42; normal symbols ≈ 1.
+/// Shrunk below this = a script (measured scripts: 0.29–0.42; normal ≈ 1).
 let scriptShrink = 0.6
 
-/// A label's usual height compared with a digit: small letters 0.6, tall symbols and
-/// descenders 1. nil for everything else (+, (, ∫…): their size says nothing.
+/// Usual height relative to a digit; nil when size says nothing (+, ∫…).
 func expectedHeight(_ label: String) -> Double? {
     if smallLetters.contains(label) { return 0.6 }
     if tallSymbols.contains(label) || descenders.contains(label) { return 1.0 }
-    if brackets.contains(label) { return 1.1 }                 // a bit taller than a digit
+    if brackets.contains(label) { return 1.1 }
     return nil
 }
 
-/// How much smaller `symbol`, read as `label`, is than it "should" be next to `base`.
-/// About 1 = the expected size; under `scriptShrink` = it shrank. nil = can't tell.
+/// Actual height ratio to `base` ÷ expected ratio. ≈1 normal, < scriptShrink shrank.
 func shrink(_ symbol: Symbol, as label: String, base: Symbol) -> Double? {
     guard let expected = expectedHeight(label),
           let baseExpected = expectedHeight(base.label),
@@ -367,24 +305,19 @@ func shrink(_ symbol: Symbol, as label: String, base: Symbol) -> Double? {
     return actualRatio / expectedRatio
 }
 
-/// The labels a symbol could plausibly be: its best guess, plus any guess within
-/// `unsureMargin` of it.
+/// The best guess plus any within `unsureMargin` of it.
 func plausibleLabels(_ symbol: Symbol) -> [String] {
     guard let best = symbol.guesses.first else { return [symbol.label] }
     return symbol.guesses.filter { $0.score - best.score < unsureMargin }.map { $0.label }
 }
 
-/// Is `symbol` a superscript or subscript of `base`?
-/// - gap: how far right of the previous symbol it starts
-/// - openGroup: the role of the symbol just before it, so the "u" and "m" of e_{sum}
-///   carry on after the "s"
+/// openGroup: the previous symbol's role, so the "u m" of e_{sum} carry on after the "s".
 func scriptRole(of symbol: Symbol, base: Symbol?, gap: Double, openGroup: ScriptRole) -> ScriptRole {
-    guard let base, base.height > 0 else { return .normal }   // nothing to attach to
-    guard gap < base.height else { return .normal }           // too far right to belong
+    guard let base, base.height > 0 else { return .normal }
+    guard gap < base.height else { return .normal }
     let above = symbol.centerY < base.centerY
 
-    // ∫ and ∑: everything looks small next to them, so go by position. A limit is small
-    // and sits in the top or bottom third; the x in "∫ x" sits in the middle.
+    // Big operators: by position. Limits sit in the top or bottom third.
     if bigOperators.contains(base.label) {
         guard symbol.height < 0.5 * base.height else { return .normal }
         let position = (symbol.centerY - base.top) / base.height   // 0 = top, 1 = bottom
@@ -396,23 +329,17 @@ func scriptRole(of symbol: Symbol, base: Symbol?, gap: Double, openGroup: Script
     let readings = plausibleLabels(symbol)
     let shrinks = readings.map { shrink(symbol, as: $0, base: base) }
     if !shrinks.contains(where: { $0 == nil }) && !readings.contains(where: { brackets.contains($0) }) {
-        // Clearly RAISED (its bottom is above the base's middle) and smaller than the base:
-        // a superscript whatever it is. Nothing sitting on the line floats up there, so a
-        // tie like "z or 2?" in (a+b)² doesn't matter: it's an exponent either way.
+        // Clearly raised and smaller: a superscript whatever it reads as
         if symbol.bottom < base.centerY && symbol.height < 0.75 * base.height { return .sup }
 
         guard shrinks.allSatisfy({ $0! < scriptShrink }) else { return .normal }
         return above ? .sup : .sub
     }
 
-    // No expected size (+, -, =…): it can't START a script, but it can carry
-    // one on, like the + in x^{n+1}, if it's small and clearly on the script's side.
+    // No expected size (+, -, =…): can't START a script, but can continue one (x^{n+1}).
+    // Exception: a clearly raised "-" starts one (e^{-x}); "x - 1" sits at offset ≈ 0.
     let offset = (symbol.centerY - base.centerY) / base.height   // negative = higher
     let small = symbol.height < 0.7 * base.height
-    // A minus clearly RAISED right after a base starts a superscript: e^{-x}. A minus in
-    // "x - 1" sits around the middle of the x (offset ≈ 0); one in an exponent sits near
-    // the top (≈ -0.5). Stricter than continuing a group (-0.2), since starting one from
-    // a misplaced "-" would swallow everything after it.
     if openGroup == .normal && symbol.label == "-" && offset < -0.35 { return .sup }
 
     if openGroup == .sup && small && offset < -0.2 { return .sup }
@@ -420,13 +347,11 @@ func scriptRole(of symbol: Symbol, base: Symbol?, gap: Double, openGroup: Script
     return .normal
 }
 
-/// Finds limits written DIRECTLY above or below a big operator (∑_{n = 1}^{\infty}) and
-/// moves each one right after its operator, so the line reads "∑, its limits, the rest".
-/// (Left to right alone would scatter them: the n under a ∑ often starts left of it.)
-/// A limit is small, roughly centered over the operator, and entirely above or below it.
+/// Moves limits written directly above/below a big operator to right after it (the n
+/// under a ∑ often starts left of it).
 func attachLimits(_ line: [Symbol]) -> [Symbol] {
-    var taken = Set<Int>()                    // indices already used as someone's limit
-    var limits: [Int: [Symbol]] = [:]         // operator index -> its limits, left to right
+    var taken = Set<Int>()
+    var limits: [Int: [Symbol]] = [:]         // operator index -> its limits
 
     for (i, op) in line.enumerated() where bigOperators.contains(op.label) {
         let width = op.right - op.x
@@ -438,11 +363,11 @@ func attachLimits(_ line: [Symbol]) -> [Symbol] {
 
             var limit = candidate
             if candidate.bottom <= op.top + 0.1 * op.height {
-                limit.role = .sup                             // above it: the upper limit
+                limit.role = .sup
             } else if candidate.top >= op.bottom - 0.1 * op.height {
-                limit.role = .sub                             // below it: the lower limit
+                limit.role = .sub
             } else {
-                continue                                      // beside it: not a limit
+                continue
             }
             taken.insert(j)
             limits[i, default: []].append(limit)
@@ -457,13 +382,12 @@ func attachLimits(_ line: [Symbol]) -> [Symbol] {
     return result
 }
 
-/// Marks each symbol on a line (already left to right) as normal or a script.
-/// The base is the latest normal symbol; a floater like "+" or "=" is never a base.
-/// Limits above/below a big operator are found first (attachLimits) and kept as they are.
+/// Marks each symbol as normal or a script. The base is the latest normal symbol that
+/// isn't a floater.
 func findScripts(_ line: [Symbol]) -> [Symbol] {
     var result = line.map { symbol in
         var fresh = symbol
-        fresh.role = .normal                  // start clean; roles are worked out here
+        fresh.role = .normal
         return fresh
     }
     result = attachLimits(result)
@@ -471,7 +395,7 @@ func findScripts(_ line: [Symbol]) -> [Symbol] {
     var openGroup = ScriptRole.normal
 
     for i in result.indices {
-        if result[i].role != .normal {        // a limit attachLimits already placed
+        if result[i].role != .normal {        // a limit from attachLimits
             openGroup = result[i].role
             continue
         }
@@ -488,15 +412,14 @@ func findScripts(_ line: [Symbol]) -> [Symbol] {
 
 // MARK: - Writing LaTeX
 
-/// One line as LaTeX: each base followed by its scripts: x^{2}, e_{s u m}, \int_{0}^{1}.
+/// Each base followed by its scripts: x^{2}, e_{s u m}, \int_{0}^{1}.
 func latex(for line: [Symbol]) -> String {
     var pieces: [String] = []
     var i = 0
     while i < line.count {
-        var piece = line[i].label          // a base (a normal symbol)
+        var piece = line[i].label
         i += 1
 
-        // collect the scripts right after it
         var subs: [String] = []
         var sups: [String] = []
         while i < line.count && line[i].role != .normal {
