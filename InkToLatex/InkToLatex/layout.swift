@@ -71,6 +71,7 @@ func isConfident(_ symbol: Symbol) -> Bool {
 func measureLine(_ line: [Symbol]) -> LineMetrics? {
     let sitters = line.filter {
         isConfident($0) && !descenders.contains($0.label) && !floaters.contains($0.label)
+            && $0.children.isEmpty      // a fraction reaches far below the line
     }
     guard !sitters.isEmpty else { return nil }
 
@@ -241,6 +242,88 @@ func groupIntoLines(_ symbols: [Symbol]) -> [[Symbol]] {
     }
     return bands.sorted { $0.top < $1.top }
                 .map { band in band.symbols.sorted { $0.x < $1.x } }
+}
+
+// MARK: - Fractions
+//
+// A fraction is a bar (a wide "-") with symbols right above it and right below it. It's
+// found on the whole page BEFORE lines are grouped: numerator, bar and denominator sit
+// on three different heights, so line grouping alone would split them into three lines.
+// The pieces are combined into one tall Symbol labelled \frac{…}{…}, which then sits
+// on its line like any other symbol: x = \frac{a + b}{2}.
+
+/// Combines every fraction on the page into a single symbol.
+/// Shortest bars go first, so a fraction inside a bigger fraction's numerator is built
+/// first and then becomes part of the bigger one.
+func combineFractions(_ symbols: [Symbol]) -> [Symbol] {
+    guard symbols.count >= 3 else { return symbols }
+    let typical = median(symbols.map { $0.height })   // a typical symbol's height
+    var remaining = symbols
+
+    let bars = symbols
+        .filter { isFractionBar($0, typical: typical) }
+        .sorted { ($0.right - $0.x) < ($1.right - $1.x) }
+
+    for bar in bars {
+        guard remaining.contains(where: { $0.id == bar.id }) else { continue }
+        let barY = bar.centerY
+        let slack = 0.1 * (bar.right - bar.x)
+        let others = remaining.filter { $0.id != bar.id }
+
+        /// Roughly centered over the bar, left to right
+        func overBar(_ s: Symbol) -> Bool {
+            let centerX = (s.x + s.right) / 2
+            return centerX > bar.x - slack && centerX < bar.right + slack
+        }
+
+        // Right above it: bottoms just over the bar. Right below: tops just under it.
+        var above = others.filter { overBar($0) && $0.bottom <= barY + 0.15 * typical
+                                                 && $0.bottom >= barY - 0.8 * typical }
+        var below = others.filter { overBar($0) && $0.top >= barY - 0.15 * typical
+                                                 && $0.top <= barY + 0.8 * typical }
+        guard !above.isEmpty, !below.isEmpty else { continue }   // a plain minus
+
+        // Then whatever shares a row with those (the raised 2 of an x² in the numerator)
+        // (still over the bar, so the "=" in "x = ½" can't sneak in)
+        above += sameRow(as: above, from: others, typical: typical) { overBar($0) && $0.bottom <= barY }
+        below += sameRow(as: below, from: others, typical: typical) { overBar($0) && $0.top >= barY }
+
+        let numerator = latex(for: applySpatialContext(above.sorted { $0.x < $1.x }))
+        let denominator = latex(for: applySpatialContext(below.sorted { $0.x < $1.x }))
+        let parts = above + [bar] + below
+        let used = Set(parts.map { $0.id })
+
+        let fraction = Symbol(
+            strokes: parts.flatMap { $0.strokes },
+            label: "\\frac{\(numerator)}{\(denominator)}",
+            x: parts.map { $0.x }.min()!,
+            right: parts.map { $0.right }.max()!,
+            top: parts.map { $0.top }.min()!,
+            bottom: parts.map { $0.bottom }.max()!,
+            children: parts.flatMap { $0.children.isEmpty ? [$0] : $0.children }
+        )
+        remaining = remaining.filter { !used.contains($0.id) } + [fraction]
+    }
+    return remaining
+}
+
+/// A fraction bar: recognized as "-" and at least 60% as wide as a typical symbol is tall
+/// (a short dash is a minus). It only BECOMES a fraction if something sits right above
+/// and right below it.
+func isFractionBar(_ symbol: Symbol, typical: Double) -> Bool {
+    symbol.label == "-" && symbol.children.isEmpty && (symbol.right - symbol.x) >= 0.6 * typical
+}
+
+/// Symbols that share a row with `group` (their middles fall within the group's height,
+/// give or take half a symbol) and pass `keep` (over the bar, on the right side of it).
+private func sameRow(as group: [Symbol], from pool: [Symbol], typical: Double,
+                     keep: (Symbol) -> Bool) -> [Symbol] {
+    let ids = Set(group.map { $0.id })
+    let top = group.map { $0.top }.min()! - 0.5 * typical
+    let bottom = group.map { $0.bottom }.max()! + 0.5 * typical
+    return pool.filter { s in
+        !ids.contains(s.id) && keep(s) && s.centerY >= top && s.centerY <= bottom
+    }
 }
 
 // MARK: - Superscripts and subscripts

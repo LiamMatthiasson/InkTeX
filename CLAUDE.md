@@ -143,6 +143,12 @@ There are two versions:
 - Split view: LaTeX panel beside the notebook, drag handle resizes (280 pt min, notebook keeps 480), width remembered via @AppStorage.
 - NoteModel.debugLogging prints the page and grouping decisions to the console; turn off when done tuning.
 
+### Background recognition, fractions, text (Oct 20)
+- Recognizer.swift is all `nonisolated` + `Sendable` (project default isolation is MainActor). NoteModel runs `recognize` via `Task.detached` (like Kotlin Dispatchers.Default).
+- Strokes go into a queue (`pending`) handled one at a time by a single worker Task, IN ORDER (grouping depends on order). `generation` is bumped by clearPage; work resuming after an `await` checks it and drops stale results. Symbols without a label yet are left out of `lines`.
+- Fractions (Layout.combineFractions): a wide "-" with symbols right above AND below, found on the whole page before line grouping, combined into one Symbol labelled \frac{…}{…} with `children` = its pieces (chips show the pieces). Shortest bars first (nesting). A bar stroke never joins the symbol above/below it (NoteModel.isFractionBarPair).
+- Text (TextLines.swift): each line's ink is rendered and read by Vision (background, cached by ink), which also gives each WORD's position. mixParts: symbols under a confidently-read word (3+ letters or a common short word, all letters) become text; the rest become inline math runs; scripts follow their base; fractions are math. No words → display equation. The document is DocBlocks: paragraphs (text + $inline$, consecutive close lines merged) and display equations; LatexView typesets it as one page in KaTeX_Main. Per-line math/text override via the ƒ/¶ menu (not saved yet).
+
 ## Roadmap (in rough order)
 
 1. Get the native app building and running (simulator, then iPad); tune pen feel.

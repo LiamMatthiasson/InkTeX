@@ -156,5 +156,41 @@ func runRecognizerChecks() {
     let eSubtractX = [box("e", 0, 40, 100, 160), box("-", 45, 60, 129, 131), box("x", 65, 90, 135, 160)]
     check("e - x (a middle minus is subtraction)", latex(for: applySpatialContext(eSubtractX)) == "e - x")
 
+    // Fractions: x = (a + b) over 2
+    let fractionPage = [box("x", 40, 60, 115, 135), box("=", 70, 90, 122, 128),
+                        box("a", 105, 120, 100, 120), box("+", 122, 135, 103, 117), box("b", 138, 155, 92, 120),
+                        box("-", 100, 160, 129, 131),
+                        box("2", 120, 140, 140, 170)]
+    let fractionLines = groupIntoLines(combineFractions(fractionPage))
+    check("fraction: one line", fractionLines.count == 1)
+    check("x = \\frac{a + b}{2}", fractionLines.first.map { latex(for: applySpatialContext($0)) } == "x = \\frac{a + b}{2}")
+    // ...but a minus with nothing above and below stays a minus
+    let minusPage = [box("a", 0, 20, 110, 130), box("-", 25, 40, 119, 121), box("b", 45, 60, 100, 130)]
+    check("a - b is not a fraction", groupIntoLines(combineFractions(minusPage)).first.map { latex(for: applySpatialContext($0)) } == "a - b")
+
+    // Words or math?
+    func word(_ text: String, _ left: Double, _ right: Double, _ confidence: Float = 0.8) -> ReadWord {
+        ReadWord(text: text, left: left, right: right, confidence: confidence)
+    }
+    check("'the' is a word", looksLikeWord(word("the", 0, 10)))
+    check("'is' is a word", looksLikeWord(word("is", 0, 10)))
+    check("'x' alone is math", !looksLikeWord(word("x", 0, 10)))
+    check("'x+1' is math", !looksLikeWord(word("x+1", 0, 10)))
+    check("'f(x)' is math", !looksLikeWord(word("f(x)", 0, 10)))
+    check("an unsure word is math", !looksLikeWord(word("hello", 0, 10, 0.2)))
+    // "x is 2": the word in the middle is text, the x and the 2 are inline math
+    let mixed = [box("x", 0, 10, 100, 110), box("i", 20, 22, 98, 110), box("s", 24, 30, 102, 110),
+                 box("2", 40, 48, 97, 110)]
+    let reading = TextReading(text: "x is 2", confidence: 0.8,
+                              words: [word("x", 0, 10), word("is", 20, 30), word("2", 40, 48)])
+    check("x is 2 → $x$ is $2$", mixParts(mixed, reading) == [.math("x"), .text("is"), .math("2")])
+    check("escape 50% & $5", escapeForLaTeX("50% & $5") == "50\\% \\& \\$5")
+
+    // The label guard: a template is the symbol itself, never ^ or _
+    check("cleanLabel ^2 → 2", cleanLabel("^2") == "2")
+    check("cleanLabel _{0} → 0", cleanLabel("_{0}") == "0")
+    check("cleanLabel ' ^{10} ' → 10", cleanLabel(" ^{10} ") == "10")
+    check("cleanLabel leaves \\alpha alone", cleanLabel("\\alpha") == "\\alpha")
+
     print("---------------------------")
 }

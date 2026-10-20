@@ -328,7 +328,12 @@ struct InkCanvas: UIViewRepresentable {
         if context.coordinator.loadToken != load.token {
             context.coordinator.loadToken = load.token
             context.coordinator.knownStrokes = []               // the model starts over too
-            container.canvas.drawing = load.drawing             // the delegate replays its strokes
+            // PencilKit reports this change right away, in the middle of SwiftUI's update,
+            // where changing the model isn't allowed. Ignore that report; the deferred
+            // call below hands the strokes over just after the update instead.
+            context.coordinator.isLoading = true
+            container.canvas.drawing = load.drawing
+            context.coordinator.isLoading = false
             container.canvas.undoManager?.removeAllActions()    // undo can't cross into another note
             container.updateContentSize()                       // as many pages as the note needs
             container.scrollToTop()
@@ -348,6 +353,7 @@ struct InkCanvas: UIViewRepresentable {
         var loadToken: Int
         weak var container: InkContainerView?
         var knownStrokes: [PKStroke] = []   // the strokes we've already told the model about
+        var isLoading = false               // true while updateUIView swaps in a drawing
 
         init(parent: InkCanvas) {
             self.parent = parent
@@ -368,6 +374,7 @@ struct InkCanvas: UIViewRepresentable {
 
         // PencilKit calls this whenever the drawing changes: a stroke finished, or undo/redo.
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
+            guard !isLoading else { return }    // see updateUIView
             container?.updateContentSize()      // add a blank page if you wrote on the last one
 
             let strokes = canvasView.drawing.strokes

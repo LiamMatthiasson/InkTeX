@@ -1,11 +1,12 @@
-// Shows the document's lines as rendered math, one display equation per line, using
+// Shows the note as ONE document, the way it looks once compiled: paragraphs of text
+// with inline math, and equations on their own lines, in LaTeX's own font. Rendered with
 // KaTeX (the same library as the web version) inside a small embedded web view.
 
 import SwiftUI
 import WebKit
 
 struct LatexView: UIViewRepresentable {
-    var lines: [String]
+    var blocks: [DocBlock]
 
     func makeUIView(context: Context) -> WKWebView {
         let webView = WKWebView()
@@ -16,22 +17,37 @@ struct LatexView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        // Only reload when the LaTeX actually changed
-        guard context.coordinator.shown != lines else { return }
-        context.coordinator.shown = lines
-        webView.loadHTMLString(Self.page(for: lines), baseURL: nil)
+        // Only reload when the document actually changed
+        guard context.coordinator.shown != blocks else { return }
+        context.coordinator.shown = blocks
+        webView.loadHTMLString(Self.page(for: blocks), baseURL: nil)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     final class Coordinator {
-        var shown: [String]? = nil
+        var shown: [DocBlock]? = nil
     }
 
-    /// A tiny web page that renders each line with KaTeX.
-    static func page(for lines: [String]) -> String {
-        // Turn the lines into a safe JavaScript array literal (handles quotes and backslashes)
-        let data = (try? JSONEncoder().encode(lines)) ?? Data("[]".utf8)
+    /// A tiny web page that typesets the document.
+    static func page(for blocks: [DocBlock]) -> String {
+        // Each block as a list of strings, for JavaScript:
+        //   ["d", latex]                          a display equation
+        //   ["p", "text", words, "math", latex…]  a paragraph, part by part
+        let encoded: [[String]] = blocks.map { block in
+            switch block {
+            case .display(let latex):
+                ["d", latex]
+            case .paragraph(let parts):
+                ["p"] + parts.flatMap { part -> [String] in
+                    switch part {
+                    case .text(let text): ["text", text]
+                    case .math(let latex): ["math", latex]
+                    }
+                }
+            }
+        }
+        let data = (try? JSONEncoder().encode(encoded)) ?? Data("[]".utf8)
         let jsString = String(decoding: data, as: UTF8.self)
             .replacingOccurrences(of: "</", with: "<\\/")   // can't end the <script> early
 
@@ -43,30 +59,49 @@ struct LatexView: UIViewRepresentable {
           <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
           <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
           <style>
-            body { margin: 0; padding: 20px; background: transparent; color: #1F3A68;
-                   font: 24px -apple-system, sans-serif; }
-            .empty { color: #66746B; font-size: 16px; }
-            .katex-display { margin: 0; text-align: left; }
-            .line { padding: 6px 0; border-bottom: 1px solid #E3E8DB; }
+            body { margin: 0; padding: 22px 26px; background: transparent; color: #1C2B22;
+                   font: 19px/1.6 KaTeX_Main, "Times New Roman", serif; }
+            p { margin: 0 0 14px; }
+            .display { margin: 12px 0 18px; }
+            .katex-display { margin: 0; }
+            .empty { color: #66746B; font: 16px -apple-system, sans-serif; }
           </style>
         </head>
         <body>
-          <div id="math"></div>
+          <div id="doc"></div>
           <script>
-            const lines = \(jsString);
-            const page = document.getElementById('math');
-            if (lines.length === 0) {
-              page.textContent = 'Write something on the paper.';
-              page.className = 'empty';
+            const blocks = \(jsString);
+            const doc = document.getElementById('doc');
+            if (blocks.length === 0) {
+              doc.textContent = 'Write something on the paper.';
+              doc.className = 'empty';
             }
-            for (const latex of lines) {
-              const el = document.createElement('div');
-              el.className = 'line';
-              page.appendChild(el);
+            function math(latex, el, display) {
               try {
-                katex.render(latex, el, { throwOnError: false, displayMode: true });
+                katex.render(latex, el, { throwOnError: false, displayMode: display });
               } catch (e) {
-                el.textContent = latex;   // KaTeX didn't load (offline?): show the code instead
+                el.textContent = display ? latex : '$' + latex + '$';   // KaTeX didn't load (offline?)
+              }
+            }
+            for (const block of blocks) {
+              if (block[0] === 'd') {                  // an equation on its own line
+                const el = document.createElement('div');
+                el.className = 'display';
+                doc.appendChild(el);
+                math(block[1], el, true);
+                continue;
+              }
+              const p = document.createElement('p');   // a paragraph: words and inline math
+              doc.appendChild(p);
+              for (let i = 1; i < block.length; i += 2) {
+                if (i > 1) p.appendChild(document.createTextNode(' '));
+                if (block[i] === 'text') {
+                  p.appendChild(document.createTextNode(block[i + 1]));
+                } else {
+                  const span = document.createElement('span');
+                  p.appendChild(span);
+                  math(block[i + 1], span, false);
+                }
               }
             }
           </script>

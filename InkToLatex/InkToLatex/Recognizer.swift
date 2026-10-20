@@ -1,4 +1,9 @@
 // The $P point-cloud recognizer, ported line by line from recognizer.js.
+//
+// Everything here is `nonisolated` (and the types are `Sendable`): this project makes
+// code belong to the main actor by default, and the recognizer is pure math that's
+// safe on any thread, so NoteModel can run it in the background (like Kotlin's
+// Dispatchers.Default) while the main thread keeps drawing your ink.
 // Like the JavaScript version, this file is pure logic: no screen, no PencilKit,
 // no saving. Points go in, ranked guesses come out.
 
@@ -10,7 +15,7 @@ import Foundation
 /// `stroke` says which stroke the point came from (set by `flatten`). It is left out
 /// of saving/loading (CodingKeys below), so saved templates stay just { x, y } and
 /// can be shared with the web version.
-struct Point: Codable {
+nonisolated struct Point: Codable, Sendable {
     var x: Double
     var y: Double
     var stroke: Int = 0
@@ -22,7 +27,7 @@ struct Point: Codable {
 
 /// A saved example of a symbol. The label is the LaTeX itself ("2", "+", "\\alpha").
 /// Stores RAW strokes, never the normalized shape (same rule as the web version).
-struct Template: Codable {
+nonisolated struct Template: Codable, Sendable {
     var label: String
     var strokes: [[Point]]
     /// For corrections: what the recognizer wrongly said this was (nil for templates
@@ -32,7 +37,7 @@ struct Template: Codable {
 }
 
 /// A template with its normalized shape computed once, ahead of time.
-struct PreparedTemplate {
+nonisolated struct PreparedTemplate: Sendable {
     let label: String
     let shape: [Point]
 
@@ -43,17 +48,21 @@ struct PreparedTemplate {
 }
 
 /// One guess: a label and how far the drawing is from it (lower = closer).
-struct Match {
+nonisolated struct Match: Sendable {
     let label: String
     let score: Double
 }
 
-let numPoints = 32
+/// How many points every drawing is resampled to. (Inside a nonisolated enum so the
+/// background recognizer can read it: in this project, plain globals belong to the main actor.)
+nonisolated enum RecognizerSettings {
+    static let numPoints = 32
+}
 
 // MARK: - Preparing a drawing
 
 /// Joins a symbol's strokes into one list, tagging each point with its stroke number.
-func flatten(_ strokes: [[Point]]) -> [Point] {
+nonisolated func flatten(_ strokes: [[Point]]) -> [Point] {
     var points: [Point] = []
     for (index, stroke) in strokes.enumerated() {
         for p in stroke {
@@ -64,7 +73,7 @@ func flatten(_ strokes: [[Point]]) -> [Point] {
 }
 
 /// Total length of the ink, skipping the jumps where the pen was lifted.
-func pathLength(_ points: [Point]) -> Double {
+nonisolated func pathLength(_ points: [Point]) -> Double {
     guard points.count > 1 else { return 0 }   // 0 or 1 points: no line to measure
 
     var total = 0.0
@@ -78,7 +87,7 @@ func pathLength(_ points: [Point]) -> Double {
 }
 
 /// Places n evenly spaced "beads" along the ink.
-func resample(_ points: [Point], _ n: Int) -> [Point] {
+nonisolated func resample(_ points: [Point], _ n: Int) -> [Point] {
     guard let first = points.first else { return [] }
 
     let length = pathLength(points)
@@ -119,7 +128,7 @@ func resample(_ points: [Point], _ n: Int) -> [Point] {
 }
 
 /// Slides the drawing so its center sits at (0, 0).
-func translateToOrigin(_ points: [Point]) -> [Point] {
+nonisolated func translateToOrigin(_ points: [Point]) -> [Point] {
     guard !points.isEmpty else { return [] }
 
     var totalX = 0.0
@@ -139,7 +148,7 @@ func translateToOrigin(_ points: [Point]) -> [Point] {
 }
 
 /// Zooms the drawing so its bigger side is 1 (same scale for x and y, so shapes don't stretch).
-func scaleToUnit(_ points: [Point]) -> [Point] {
+nonisolated func scaleToUnit(_ points: [Point]) -> [Point] {
     var minX = Double.infinity, maxX = -Double.infinity
     var minY = Double.infinity, maxY = -Double.infinity
     for p in points {
@@ -159,8 +168,8 @@ func scaleToUnit(_ points: [Point]) -> [Point] {
 }
 
 /// All three steps: resample, then slide, then zoom.
-func normalize(_ points: [Point]) -> [Point] {
-    scaleToUnit(translateToOrigin(resample(points, numPoints)))
+nonisolated func normalize(_ points: [Point]) -> [Point] {
+    scaleToUnit(translateToOrigin(resample(points, RecognizerSettings.numPoints)))
 }
 
 // MARK: - Point-cloud matching
@@ -170,7 +179,7 @@ func normalize(_ points: [Point]) -> [Point] {
 /// `limit` makes it fast: once the running total reaches the limit, this match can't
 /// win anymore, so it stops early ("early abandoning"). Most templates are rejected
 /// after a few dots instead of all 32.
-func greedyMatch(_ a: [Point], _ b: [Point], start: Int, limit: Double = .infinity) -> Double {
+nonisolated func greedyMatch(_ a: [Point], _ b: [Point], start: Int, limit: Double = .infinity) -> Double {
     let n = a.count
     var claimed = [Bool](repeating: false, count: n)
     var total = 0.0
@@ -197,7 +206,7 @@ func greedyMatch(_ a: [Point], _ b: [Point], start: Int, limit: Double = .infini
 /// Tries several starting dots, in both directions, and keeps the best score.
 /// Each attempt only has to beat the best so far, so later attempts give up early.
 /// If nothing beats `limit`, the result is just "at least limit" (the caller ignores it).
-func cloudDistance(_ a: [Point], _ b: [Point], limit: Double = .infinity) -> Double {
+nonisolated func cloudDistance(_ a: [Point], _ b: [Point], limit: Double = .infinity) -> Double {
     let n = a.count
     guard n > 0, b.count == n else { return .infinity }
 
@@ -214,7 +223,7 @@ func cloudDistance(_ a: [Point], _ b: [Point], limit: Double = .infinity) -> Dou
 
 /// Compares a symbol (its strokes) with every template.
 /// Returns one Match per label, best first.
-func recognize(_ strokes: [[Point]], templates: [PreparedTemplate]) -> [Match] {
+nonisolated func recognize(_ strokes: [[Point]], templates: [PreparedTemplate]) -> [Match] {
     guard !templates.isEmpty else { return [] }
 
     let drawn = normalize(flatten(strokes))

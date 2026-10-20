@@ -25,6 +25,7 @@ struct ContentView: View {
     @AppStorage("latexPanelWidth") private var panelWidth: Double = 420   // remembered between launches
     @State private var dragStartWidth: Double?            // panel width when a drag began
     @State private var showNotes = false
+    @State private var showTemplates = false
     @State private var confirmErase = false
     @State private var correcting: Symbol?                 // the symbol "Type another…" is for
     @State private var correctionText = ""
@@ -197,7 +198,7 @@ struct ContentView: View {
     /// Teach: type what your LAST symbol should be, tap Teach, and it becomes a template.
     private var teachControls: some View {
         HStack(spacing: 6) {
-            TextField("Last symbol is… e.g. 2 or \\alpha", text: $label)
+            TextField("Last symbol is… e.g. 2 (not ^2)", text: $label)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .padding(.horizontal, 11)
@@ -213,6 +214,11 @@ struct ContentView: View {
             // Removes the last template you taught (stroke undo is the two-finger tap)
             Button("Undo Teach") { model.undoTemplate() }
                 .buttonStyle(OutlineButtonStyle())
+
+            // Everything you've taught: delete or rename any of them
+            Button("Templates") { showTemplates = true }
+                .buttonStyle(OutlineButtonStyle())
+                .sheet(isPresented: $showTemplates) { TemplatesView(model: model) }
         }
         .floatingSheet()
     }
@@ -281,7 +287,7 @@ struct ContentView: View {
                     .foregroundStyle(Color.ink)
                 Spacer()
                 Button("Copy") {
-                    if model.lineLatex.isEmpty {
+                    if model.docBlocks.isEmpty {
                         model.status = "Nothing to copy yet"
                     } else {
                         UIPasteboard.general.string = model.document   // the whole .tex document
@@ -299,16 +305,16 @@ struct ContentView: View {
 
             Divider()
 
-            LatexView(lines: model.lineLatex)
+            LatexView(blocks: model.docBlocks)
                 .frame(maxHeight: .infinity)
 
             Divider()
 
             // The full document's source (what Copy copies)
             ScrollView {
-                Text(model.lineLatex.isEmpty ? "The LaTeX document appears here." : model.document)
+                Text(model.docBlocks.isEmpty ? "The LaTeX document appears here." : model.document)
                     .font(.system(.callout, design: .monospaced))
-                    .foregroundStyle(model.lineLatex.isEmpty ? Color.muted : Color.ink)
+                    .foregroundStyle(model.docBlocks.isEmpty ? Color.muted : Color.ink)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16)
@@ -334,10 +340,24 @@ struct ContentView: View {
                         .foregroundStyle(Color.muted)
                 }
                 ForEach(lines.indices, id: \.self) { n in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            ForEach(lines[n], id: \.id) { symbol in
-                                symbolChip(symbol)
+                    let line = lines[n]
+                    HStack(spacing: 6) {
+                        lineKindMenu(line)
+                        if model.kind(of: line) == .text {
+                            // a text line: what Vision read
+                            Text(model.textReading(of: line)?.text ?? "reading…")
+                                .font(.callout)
+                                .foregroundStyle(Color.ink)
+                                .lineLimit(1)
+                        } else {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    // a fraction shows the symbols it's made of
+                                    ForEach(line.flatMap { $0.children.isEmpty ? [$0] : $0.children },
+                                            id: \.id) { symbol in
+                                        symbolChip(symbol)
+                                    }
+                                }
                             }
                         }
                     }
@@ -399,6 +419,22 @@ struct ContentView: View {
             .background(isUnsure(symbol) ? Color(hex: 0xF6E7C8) : Color.white,
                         in: RoundedRectangle(cornerRadius: 6))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.rule))
+        }
+    }
+
+    /// The icon at the start of each row: math (ƒ) or text (¶). Tap to overrule it.
+    private func lineKindMenu(_ line: [Symbol]) -> some View {
+        let isText = model.kind(of: line) == .text
+        return Menu {
+            Button("Read as math") { model.setKind(.math, for: line) }
+            Button("Read as text") { model.setKind(.text, for: line) }
+            Button("Decide automatically") { model.setKind(nil, for: line) }
+        } label: {
+            Image(systemName: isText ? "text.alignleft" : "function")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Color.padGreen)
+                .frame(width: 28, height: 26)
+                .background(Color.padGreenTint, in: RoundedRectangle(cornerRadius: 6))
         }
     }
 
