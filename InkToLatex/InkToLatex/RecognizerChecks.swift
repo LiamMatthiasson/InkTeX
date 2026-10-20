@@ -150,5 +150,11 @@ func runRecognizerChecks() {
     let fOfX = [box("f", 58, 66, 53, 67), box("(", 71, 73, 58, 67), box("x", 79, 85, 59, 67), box(")", 89, 92, 56, 67)]
     check("f ( x )", latex(for: applySpatialContext(fOfX)) == "f ( x )")
 
+    // negative exponents: a raised minus starts the superscript; a middle one doesn't
+    let eMinusX = [box("e", 0, 40, 100, 160), box("-", 45, 60, 104, 106), box("x", 62, 80, 85, 110)]
+    check("e^{- x}", latex(for: applySpatialContext(eMinusX)) == "e^{- x}")
+    let eSubtractX = [box("e", 0, 40, 100, 160), box("-", 45, 60, 129, 131), box("x", 65, 90, 135, 160)]
+    check("e - x (a middle minus is subtraction)", latex(for: applySpatialContext(eSubtractX)) == "e - x")
+
     print("---------------------------")
 }

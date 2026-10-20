@@ -30,9 +30,12 @@ final class NoteModel {
 
     // What's on the page right now
     private(set) var symbols: [Symbol] = []
-    private var allStrokes: [[Point]] = []   // everything drawn since the last Erase (used by Save)
     private var lastPenUp: TimeInterval = 0
     private var replaying = false            // true while replaceStrokes replays the page
+
+    /// Print the page and grouping decisions to Xcode's console after every stroke.
+    /// Handy while tuning; turn off when you're done (it also costs a little speed).
+    let debugLogging = true
 
     // Results we've already worked out, so replaying the page (after undo, redo or
     // erasing) doesn't re-recognize symbols that didn't change.
@@ -85,7 +88,6 @@ final class NoteModel {
     /// Called by the canvas each time the pen lifts.
     func strokeFinished(_ points: [Point], startTime: TimeInterval, endTime: TimeInterval) {
         guard !points.isEmpty else { return }
-        allStrokes.append(points)
 
         guard !prepared.isEmpty else { return }   // nothing to recognize against yet
 
@@ -103,7 +105,7 @@ final class NoteModel {
             symbols[last].strokes.append(points)          // same symbol: add this stroke
             relabel(last)
         } else {
-            if !replaying, let last = symbols.indices.last {
+            if debugLogging, !replaying, let last = symbols.indices.last {
                 // Why didn't this stroke join the symbol before it? (For debugging grouping;
                 // remove once grouping behaves. It recognizes the pair, so it costs a little.)
                 let prev = symbols[last].strokes
@@ -114,7 +116,7 @@ final class NoteModel {
             symbols.append(Symbol(strokes: [points], label: "", x: 0))   // a new symbol
             relabel(symbols.count - 1)
         }
-        if !replaying { printLayout() }
+        if debugLogging, !replaying { printLayout() }
     }
 
     /// Prints how the page was read, line by line, to Xcode's console: each symbol's
@@ -171,7 +173,6 @@ final class NoteModel {
 
     /// Forget everything on the page (the canvas clears itself separately).
     func clearPage() {
-        allStrokes = []
         symbols = []
         lastPenUp = 0
     }
@@ -186,7 +187,7 @@ final class NoteModel {
             strokeFinished(stroke.points, startTime: stroke.start, endTime: stroke.end)
         }
         replaying = false
-        printLayout()
+        if debugLogging { printLayout() }
     }
 
     // MARK: - Grouping helpers
@@ -247,17 +248,21 @@ final class NoteModel {
 
     /// Saves everything on the page as a template. Returns true if it saved
     /// (the caller then clears the canvas).
+    /// Teach: saves the LAST symbol you wrote as a template with this label, and leaves
+    /// the ink where it is (it's part of your note now). Write a symbol, type what it
+    /// should be, tap Teach, and it's re-read with the new template.
     func saveTemplate(label rawLabel: String) -> Bool {
         let label = rawLabel.trimmingCharacters(in: .whitespaces)   // the label is the LaTeX
         guard !label.isEmpty else { status = "Type a label first"; return false }
-        guard !allStrokes.isEmpty else { status = "Draw something first"; return false }
+        guard let last = symbols.indices.last else { status = "Write a symbol first"; return false }
 
-        let template = Template(label: label, strokes: allStrokes)
+        let template = Template(label: label, strokes: symbols[last].strokes)
         templates.append(template)
         prepared.append(PreparedTemplate(template))   // normalized once, right now
         recognitionCache.removeAll()                  // results may change with a new template
         persistTemplates()
-        status = "Saved \"\(label)\" (\(templates.count) total)"
+        relabel(last)                                 // re-read it: now it matches exactly
+        status = "Taught \"\(label)\" (\(templates.count) of yours)"
         return true
     }
 

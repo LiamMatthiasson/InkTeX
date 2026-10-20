@@ -127,6 +127,21 @@ There are two versions:
 - **Templates are per device.** Web: `localStorage`. Native: `templates.json` in the app's
   Documents folder. Real templates should be made on the iPad with the Pencil.
 
+### Scripts, limits and layout (Layout.swift)
+- Pipeline per line: groupIntoLines → findScripts → re-rank NORMAL symbols only → fixLoneBar → findScripts again.
+- Lines: tallest symbols first; small symbols may join up to half a line-height outside a band. Min line height = median symbol height on the page (not fixed points: Liam writes zoomed in, ~10 pt letters).
+- A script is a symbol SMALLER THAN EXPECTED next to its base: shrink = (actual height ratio) / (expected ratio from expectedHeight: small letters 0.6, tall/descenders 1, brackets 1.1). Script if every plausible reading shrinks below 0.6, or if clearly raised (bottom above base's middle). Liam's subscripts sit ON the line (same geometry as "2x"), which is why "expected size" matters.
+- Can't START a script: anything with a size-less reading (= + -) or brackets. Exception: a clearly raised "-" (offset < -0.35) starts a superscript (e^{-x}).
+- Big operators (int, oint, sum, prod): corner limits by position (top/bottom third); attachLimits moves limits written directly above/below to right after the operator.
+- `subscript` is a Swift keyword: ScriptRole cases are .normal/.sup/.sub.
+
+### Notes and teaching
+- NoteStore: Documents/Notes/notes.json (id, title, modified) + <id>.drawing (PKDrawing). Only ink is saved; LaTeX is rebuilt by replaying strokes on open. Autosave 1 s after the last change and when leaving the app.
+- InkCanvas takes a CanvasLoad (bump token to show a drawing; erase = load an empty one).
+- "Teach" saves the LAST symbol as a template and leaves the ink (it used to erase the page, which would destroy notes).
+- Split view: LaTeX panel beside the notebook, drag handle resizes (280 pt min, notebook keeps 480), width remembered via @AppStorage.
+- NoteModel.debugLogging prints the page and grouping decisions to the console; turn off when done tuning.
+
 ## Roadmap (in rough order)
 
 1. Get the native app building and running (simulator, then iPad); tune pen feel.

@@ -1,16 +1,33 @@
-// The screen: scrolling notebook pages with the PencilKit canvas on top,
-// the pen hotbar at the top, teach controls bottom left, LaTeX and Erase bottom right,
-// and the LaTeX panel floating over the right side. (The Swift version of index.html.)
+// The screen: the notebook (pages + PencilKit) with the pen hotbar on top and the
+// toolbar at the bottom, and, in split view, the LaTeX panel beside it with a handle
+// you drag to resize. Notes save themselves a second after you stop writing.
 
 import SwiftUI
+import PencilKit
 
 struct ContentView: View {
     @State private var model = NoteModel()
+    @State private var store = NoteStore()
+
+    // The open note
+    @State private var currentNote: UUID?
+    @State private var canvasLoad = CanvasLoad()          // bump to show a different drawing
+    @State private var latestDrawing = PKDrawing()        // the ink right now (what gets saved)
+    @State private var saveTask: Task<Void, Never>?       // the pending autosave
+
+    // Pens
     @State private var pen: PenKind = .pen
     @State private var widths: [PenKind: CGFloat] = [:]   // thickness chosen for each pen
-    @State private var clearToken = 0      // bump to wipe the canvas
+
+    // Panels and dialogs
     @State private var label = ""
-    @State private var showLatex = false
+    @State private var splitView = false
+    @AppStorage("latexPanelWidth") private var panelWidth: Double = 420   // remembered between launches
+    @State private var dragStartWidth: Double?            // panel width when a drag began
+    @State private var showNotes = false
+    @State private var confirmErase = false
+
+    @Environment(\.scenePhase) private var scenePhase
 
     /// Size of the preview dot: the real width, scaled down for big erasers so it fits
     private var preview: CGFloat {
@@ -26,19 +43,52 @@ struct ContentView: View {
     }
 
     var body: some View {
+        GeometryReader { geo in
+            HStack(spacing: 0) {
+                notebook
+                if splitView {
+                    splitHandle(totalWidth: geo.size.width)
+                    latexPanel
+                        .frame(width: clampedPanelWidth(geo.size.width))
+                }
+            }
+        }
+        .background(Color.sheet)
+        .onAppear {
+            runRecognizerChecks()   // prints ✅/❌ lines in Xcode's console
+            openMostRecentNote()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { saveNow() }   // leaving the app: save right away
+        }
+        .confirmationDialog("Erase everything in this note?", isPresented: $confirmErase,
+                            titleVisibility: .visible) {
+            Button("Erase", role: .destructive) { erase() }
+        } message: {
+            Text("This can't be undone.")
+        }
+    }
+
+    // MARK: - The notebook (left side, or the whole screen)
+
+    private var notebook: some View {
         ZStack {
             // Notebook pages + PencilKit. Scroll with two fingers (one with a mouse/finger
-            // when no Pencil is paired); pinch to zoom; two-finger double-tap = undo,
-            // three-finger double-tap = redo.
+            // when no Pencil is paired); pinch to zoom; two-finger tap = undo,
+            // three-finger tap = redo.
             InkCanvas(
                 pen: pen,
                 width: width.wrappedValue,
-                clearToken: clearToken,
+                load: canvasLoad,
                 onStroke: { stroke in
                     model.strokeFinished(stroke.points, startTime: stroke.start, endTime: stroke.end)
                 },
                 onStrokesReplaced: { strokes in
                     model.replaceStrokes(strokes)
+                },
+                onDrawingChanged: { drawing in
+                    latestDrawing = drawing
+                    scheduleSave()
                 }
             )
             .ignoresSafeArea()
@@ -50,19 +100,6 @@ struct ContentView: View {
                 bottomBar
                     .padding(16)
             }
-
-            if showLatex {
-                HStack {
-                    Spacer()
-                    latexPanel
-                }
-                .padding(.top, 90)
-                .padding(.bottom, 84)
-                .padding(.trailing, 16)
-            }
-        }
-        .onAppear {
-            runRecognizerChecks()   // prints ✅/❌ lines in Xcode's console
         }
     }
 
@@ -134,55 +171,105 @@ struct ContentView: View {
 
     // MARK: - Bottom toolbar
 
+    /// One row when there's room; in a narrow split view, two rows instead.
     private var bottomBar: some View {
-        HStack(alignment: .center) {
-            // Left: teach mode
-            HStack(spacing: 6) {
-                TextField("Label as LaTeX, e.g. 2 or \\alpha", text: $label)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .padding(.horizontal, 11)
-                    .padding(.vertical, 9)
-                    .frame(width: 240)
-                    .background(Color.white, in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.rule))
-
-                Button("Save") {
-                    if model.saveTemplate(label: label) {
-                        erase()
-                    }
-                }
-                .buttonStyle(FilledButtonStyle(color: .padGreen))
-
-                // Removes the last saved template (stroke undo is the two-finger double-tap)
-                Button("Undo Save") { model.undoTemplate() }
-                    .buttonStyle(OutlineButtonStyle())
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center) {
+                teachControls
+                Spacer()
+                statusText
+                Spacer()
+                noteControls
             }
-            .floatingSheet()
-
-            Spacer()
-
-            Text(model.status)
-                .font(.footnote)
-                .foregroundStyle(Color.muted)
-
-            Spacer()
-
-            // Right: view and erase
-            HStack(spacing: 6) {
-                Button(showLatex ? "Hide LaTeX" : "Show LaTeX") {
-                    showLatex.toggle()
+            VStack(alignment: .leading, spacing: 8) {
+                teachControls
+                HStack {
+                    statusText
+                    Spacer()
+                    noteControls
                 }
-                .buttonStyle(OutlineButtonStyle())
-
-                Button("Erase") { erase() }
-                    .buttonStyle(FilledButtonStyle(color: .brick))
             }
-            .floatingSheet()
         }
     }
 
-    // MARK: - LaTeX panel
+    /// Teach: type what your LAST symbol should be, tap Teach, and it becomes a template.
+    private var teachControls: some View {
+        HStack(spacing: 6) {
+            TextField("Last symbol is… e.g. 2 or \\alpha", text: $label)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .padding(.horizontal, 11)
+                .padding(.vertical, 9)
+                .frame(width: 220)
+                .background(Color.white, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.rule))
+
+            // The label stays filled in, so you can teach five "b"s in a row
+            Button("Teach") { _ = model.saveTemplate(label: label) }
+            .buttonStyle(FilledButtonStyle(color: .padGreen))
+
+            // Removes the last template you taught (stroke undo is the two-finger tap)
+            Button("Undo Teach") { model.undoTemplate() }
+                .buttonStyle(OutlineButtonStyle())
+        }
+        .floatingSheet()
+    }
+
+    private var statusText: some View {
+        Text(model.status)
+            .font(.footnote)
+            .foregroundStyle(Color.muted)
+            .lineLimit(1)
+    }
+
+    private var noteControls: some View {
+        HStack(spacing: 6) {
+            Button("Notes") { showNotes = true }
+                .buttonStyle(OutlineButtonStyle())
+                .popover(isPresented: $showNotes) { notesList }
+
+            Button(splitView ? "Close LaTeX" : "Split View") {
+                withAnimation(.easeInOut(duration: 0.2)) { splitView.toggle() }
+            }
+            .buttonStyle(OutlineButtonStyle())
+
+            Button("Erase") { confirmErase = true }
+                .buttonStyle(FilledButtonStyle(color: .brick))
+        }
+        .floatingSheet()
+    }
+
+    // MARK: - Split view: the handle and the LaTeX panel
+
+    /// The panel can't get narrower than 280 points, or leave the notebook less than 480.
+    private func clampedPanelWidth(_ total: CGFloat) -> CGFloat {
+        let widest = max(280, total - 480)
+        return min(max(panelWidth, 280), widest)
+    }
+
+    /// The bar between notebook and panel. Drag it left to widen the panel, right to
+    /// narrow it.
+    private func splitHandle(totalWidth: CGFloat) -> some View {
+        ZStack {
+            Rectangle().fill(Color.rule).frame(width: 1)
+            Capsule().fill(Color.muted).frame(width: 5, height: 44)
+        }
+        .frame(width: 18)
+        .frame(maxHeight: .infinity)
+        .background(Color.sheet)
+        .contentShape(Rectangle())                 // the whole strip is grabbable
+        .gesture(
+            DragGesture(minimumDistance: 1)
+                .onChanged { drag in
+                    let start = dragStartWidth ?? Double(clampedPanelWidth(totalWidth))
+                    dragStartWidth = start
+                    // moving left (negative translation) makes the panel wider
+                    panelWidth = start - drag.translation.width
+                    panelWidth = Double(clampedPanelWidth(totalWidth))
+                }
+                .onEnded { _ in dragStartWidth = nil }
+        )
+    }
 
     private var latexPanel: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -221,24 +308,119 @@ struct ContentView: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
             }
-            .frame(maxHeight: 220)
+            .frame(maxHeight: 260)
             .background(Color(hex: 0xF1F4EC))
         }
-        .frame(width: 420)
         .background(Color.sheet)
-        .overlay(alignment: .leading) {    // the pad's green margin line
-            Rectangle().fill(Color.padGreen).frame(width: 3)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.rule))
-        .shadow(color: .black.opacity(0.08), radius: 9, y: 4)
     }
 
-    // MARK: - Actions
+    // MARK: - Notes list (a popover from the Notes button)
+
+    private var notesList: some View {
+        NavigationStack {
+            List {
+                Section("This note") {
+                    TextField("Title", text: currentTitle)
+                }
+                Section("All notes") {
+                    ForEach(store.notes) { note in
+                        Button {
+                            open(note.id)
+                            showNotes = false
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(note.title)
+                                    .foregroundStyle(Color.ink)
+                                Text(note.modified.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption)
+                                    .foregroundStyle(Color.muted)
+                            }
+                        }
+                        .listRowBackground(note.id == currentNote ? Color.padGreenTint : Color.white)
+                    }
+                    .onDelete { offsets in
+                        // look up the ids first: deleting shifts the positions of the rest
+                        let ids = offsets.map { store.notes[$0].id }
+                        ids.forEach { delete($0) }
+                    }
+                }
+            }
+            .navigationTitle("Notes")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                Button("New Note") {
+                    newNote()
+                    showNotes = false
+                }
+            }
+        }
+        .frame(width: 360, height: 480)
+    }
+
+    /// The open note's title, editable in the notes list.
+    private var currentTitle: Binding<String> {
+        Binding(
+            get: { store.notes.first { $0.id == currentNote }?.title ?? "" },
+            set: { title in if let id = currentNote { store.rename(id, to: title) } }
+        )
+    }
+
+    // MARK: - Opening and saving notes
+
+    private func openMostRecentNote() {
+        guard currentNote == nil else { return }       // onAppear can run more than once
+        if let recent = store.notes.first {
+            open(recent.id)
+        } else {
+            newNote()
+        }
+    }
+
+    private func newNote() {
+        open(store.create().id)
+    }
+
+    /// Saves the open note, then shows another. The canvas replays the new note's strokes
+    /// into the model, which rebuilds its symbols and LaTeX from scratch.
+    private func open(_ id: UUID) {
+        saveNow()
+        currentNote = id
+        model.clearPage()
+        latestDrawing = store.drawing(for: id)
+        canvasLoad = CanvasLoad(token: canvasLoad.token + 1, drawing: latestDrawing)
+    }
+
+    private func delete(_ id: UUID) {
+        let wasOpen = id == currentNote
+        if wasOpen {
+            saveTask?.cancel()                         // don't save a note we're deleting
+            currentNote = nil
+        }
+        store.delete(id)
+        if wasOpen { openMostRecentNote() }            // open another (or a fresh one)
+    }
+
+    /// Save a second after the last change, so we write once per pause, not per stroke.
+    private func scheduleSave() {
+        saveTask?.cancel()
+        saveTask = Task {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            saveNow()
+        }
+    }
+
+    private func saveNow() {
+        saveTask?.cancel()
+        guard let id = currentNote else { return }
+        store.save(latestDrawing, for: id)
+    }
 
     private func erase() {
         model.clearPage()
-        clearToken += 1
+        latestDrawing = PKDrawing()
+        canvasLoad = CanvasLoad(token: canvasLoad.token + 1, drawing: PKDrawing())
+        saveNow()
     }
 }
 

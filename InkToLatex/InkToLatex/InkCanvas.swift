@@ -270,12 +270,20 @@ final class InkContainerView: UIView {
 
 // MARK: - SwiftUI wrapper
 
+/// What the canvas should show. Bump `token` to load `drawing` (a saved note, or an
+/// empty one to erase). Compared by token alone: "load this now" happens once per bump.
+struct CanvasLoad {
+    var token = 0
+    var drawing = PKDrawing()
+}
+
 struct InkCanvas: UIViewRepresentable {
     var pen: PenKind
     var width: CGFloat
-    var clearToken: Int                          // change this number to wipe the canvas
-    var onStroke: (StrokeInfo) -> Void           // a new stroke was drawn
-    var onStrokesReplaced: ([StrokeInfo]) -> Void // undo/redo changed earlier strokes: here they all are
+    var load: CanvasLoad                          // bump its token to show a different drawing
+    var onStroke: (StrokeInfo) -> Void            // a new stroke was drawn
+    var onStrokesReplaced: ([StrokeInfo]) -> Void // undo/redo/load changed earlier strokes: here they all are
+    var onDrawingChanged: (PKDrawing) -> Void     // any change at all (for saving)
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -317,25 +325,33 @@ struct InkCanvas: UIViewRepresentable {
         context.coordinator.parent = self
         container.canvas.tool = pen.pkTool(width: width)
 
-        if context.coordinator.clearToken != clearToken {
-            context.coordinator.clearToken = clearToken
-            context.coordinator.knownStrokes = []
-            container.canvas.drawing = PKDrawing()               // a fresh, empty notebook
-            container.canvas.undoManager?.removeAllActions()     // undo can't bring back erased ink
-            container.updateContentSize()                        // back to a single page
+        if context.coordinator.loadToken != load.token {
+            context.coordinator.loadToken = load.token
+            context.coordinator.knownStrokes = []               // the model starts over too
+            container.canvas.drawing = load.drawing             // the delegate replays its strokes
+            container.canvas.undoManager?.removeAllActions()    // undo can't cross into another note
+            container.updateContentSize()                       // as many pages as the note needs
             container.scrollToTop()
+            // Hand the loaded strokes to the model, just after this SwiftUI update finishes
+            // (changing the model in the middle of one isn't allowed). If PencilKit also
+            // reports the change itself, the second report finds nothing new.
+            let coordinator = context.coordinator
+            let canvas = container.canvas
+            DispatchQueue.main.async {
+                coordinator.canvasViewDrawingDidChange(canvas)
+            }
         }
     }
 
     final class Coordinator: NSObject, PKCanvasViewDelegate {
         var parent: InkCanvas
-        var clearToken: Int
+        var loadToken: Int
         weak var container: InkContainerView?
         var knownStrokes: [PKStroke] = []   // the strokes we've already told the model about
 
         init(parent: InkCanvas) {
             self.parent = parent
-            self.clearToken = parent.clearToken
+            self.loadToken = parent.load.token
         }
 
         // MARK: Gestures
@@ -365,6 +381,7 @@ struct InkCanvas: UIViewRepresentable {
                 parent.onStrokesReplaced(strokes.map { Coordinator.info(for: $0) })
             }
             knownStrokes = strokes
+            parent.onDrawingChanged(canvasView.drawing)
         }
 
         /// Do the first `known.count` strokes match? Compared by when each stroke was created

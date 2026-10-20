@@ -310,12 +310,6 @@ func scriptRole(of symbol: Symbol, base: Symbol?, gap: Double, openGroup: Script
         return .normal
     }
 
-    // A script only if EVERY plausible reading is too small. If the recognizer can't
-    // decide between "s" and "5", a small s explains the size without any script.
-    // And every reading must HAVE a known size: if one of them is "=" or "-", the
-    // symbol's smallness proves nothing (an "=" is always flat).
-    // Brackets don't START scripts either: a small "(" after f is f(x), not f_{(}.
-    // (They still work as a BASE: the ")" in (a+b)².)
     let readings = plausibleLabels(symbol)
     let shrinks = readings.map { shrink(symbol, as: $0, base: base) }
     if !shrinks.contains(where: { $0 == nil }) && !readings.contains(where: { brackets.contains($0) }) {
@@ -332,6 +326,12 @@ func scriptRole(of symbol: Symbol, base: Symbol?, gap: Double, openGroup: Script
     // one on, like the + in x^{n+1}, if it's small and clearly on the script's side.
     let offset = (symbol.centerY - base.centerY) / base.height   // negative = higher
     let small = symbol.height < 0.7 * base.height
+    // A minus clearly RAISED right after a base starts a superscript: e^{-x}. A minus in
+    // "x - 1" sits around the middle of the x (offset ≈ 0); one in an exponent sits near
+    // the top (≈ -0.5). Stricter than continuing a group (-0.2), since starting one from
+    // a misplaced "-" would swallow everything after it.
+    if openGroup == .normal && symbol.label == "-" && offset < -0.35 { return .sup }
+
     if openGroup == .sup && small && offset < -0.2 { return .sup }
     if openGroup == .sub && small && offset > 0.2 { return .sub }
     return .normal
