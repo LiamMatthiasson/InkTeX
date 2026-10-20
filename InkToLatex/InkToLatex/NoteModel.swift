@@ -10,10 +10,13 @@ struct Symbol {
     var strokes: [[Point]]
     var label: String
     var x: Double          // left edge
+    var right: Double = 0  // right edge
     var top: Double = 0    // highest point (y grows downward)
     var bottom: Double = 0 // lowest point
     var guesses: [Match] = []   // the recognizer's ranked guesses (Layout.swift may re-rank them)
+    var role: ScriptRole = .normal   // superscript/subscript? (set in Layout.swift)
     var centerY: Double { (top + bottom) / 2 }
+    var height: Double { bottom - top }
 }
 
 @Observable
@@ -29,6 +32,7 @@ final class NoteModel {
     private(set) var symbols: [Symbol] = []
     private var allStrokes: [[Point]] = []   // everything drawn since the last Erase (used by Save)
     private var lastPenUp: TimeInterval = 0
+    private var replaying = false            // true while replaceStrokes replays the page
 
     // Results we've already worked out, so replaying the page (after undo, redo or
     // erasing) doesn't re-recognize symbols that didn't change.
@@ -44,43 +48,15 @@ final class NoteModel {
 
     // MARK: - Reading the page: lines, then the document
 
-    /// Every line gets at least this much height, so a line that starts with a flat
-    /// symbol like "-" still catches the digits written next to it.
-    let minLineHeight = 30.0
-
-    /// The symbols grouped into lines, top to bottom; each line reads left to right.
-    ///
-    /// Sort the symbols by their vertical center. Walking down the page, a symbol joins
-    /// the current line if its center falls inside that line's vertical band (from its
-    /// highest top to its lowest bottom); otherwise it starts a new line. It's the same
-    /// idea as grouping strokes into symbols, one level up.
+    /// The symbols grouped into lines, top to bottom; each line reads left to right,
+    /// with its scripts found and look-alikes re-ranked. (All the logic is in Layout.swift.)
     var lines: [[Symbol]] {
-        let topToBottom = symbols.sorted { $0.centerY < $1.centerY }
-
-        var result: [[Symbol]] = []
-        var bandTop = 0.0
-        var bandBottom = 0.0
-
-        for symbol in topToBottom {
-            if !result.isEmpty && symbol.centerY >= bandTop && symbol.centerY <= bandBottom {
-                result[result.count - 1].append(symbol)       // same line: widen the band
-                bandTop = min(bandTop, symbol.top)
-                bandBottom = max(bandBottom, symbol.bottom)
-            } else {
-                result.append([symbol])                       // a new line starts here
-                let half = max(symbol.bottom - symbol.top, minLineHeight) / 2
-                bandTop = min(symbol.top, symbol.centerY - half)
-                bandBottom = max(symbol.bottom, symbol.centerY + half)
-            }
-        }
-        // Left to right, then let each symbol's size and position on its line break ties
-        // between look-alikes (g vs 9, s vs 5…). See Layout.swift.
-        return result.map { line in applySpatialContext(line.sorted { $0.x < $1.x }) }
+        groupIntoLines(symbols).map { applySpatialContext($0) }
     }
 
-    /// Each line as LaTeX: its labels, left to right, joined with spaces.
+    /// Each line as LaTeX, scripts and all: "x^{2} + 1".
     var lineLatex: [String] {
-        lines.map { line in line.map { $0.label }.joined(separator: " ") }
+        lines.map { latex(for: $0) }
     }
 
     /// The whole page as a complete LaTeX document, one display equation per line.
@@ -118,14 +94,42 @@ final class NoteModel {
         let quick = startTime - lastPenUp < groupTime
         lastPenUp = endTime
 
-        if let last = symbols.indices.last, quick,
+        // Strokes that CROSS (the two lines of a slow "+" or "x") belong together however
+        // long you paused; the 1-second rule is for strokes that don't touch, like "=".
+        if let last = symbols.indices.last,
+           quick || overlapsY(symbols[last].strokes, [points]),
            overlapsX(symbols[last].strokes, [points]),
            looksLikeOneSymbol(symbols[last].strokes + [points]) {
             symbols[last].strokes.append(points)          // same symbol: add this stroke
             relabel(last)
         } else {
+            if !replaying, let last = symbols.indices.last {
+                // Why didn't this stroke join the symbol before it? (For debugging grouping;
+                // remove once grouping behaves. It recognizes the pair, so it costs a little.)
+                let prev = symbols[last].strokes
+                let together = results(for: prev + [points]).first
+                let togetherText = together.map { "\($0.label) \(String(format: "%.2f", $0.score))" } ?? "-"
+                print("  new symbol: quick \(quick), sharesHeight \(overlapsY(prev, [points])), overlapsX \(overlapsX(prev, [points])), together \(togetherText) (joins below \(joinScoreLimit))")
+            }
             symbols.append(Symbol(strokes: [points], label: "", x: 0))   // a new symbol
             relabel(symbols.count - 1)
+        }
+        if !replaying { printLayout() }
+    }
+
+    /// Prints how the page was read, line by line, to Xcode's console: each symbol's
+    /// label, role (^ or _), box, and the recognizer's top 3 guesses. When the LaTeX
+    /// is wrong, this shows WHICH step went wrong: grouping, recognizing, or layout.
+    func printLayout() {
+        print("==== page ====")
+        for (n, line) in lines.enumerated() {
+            print("line \(n + 1): \(latex(for: line))")
+            for s in line {
+                let role = s.role == .sup ? "^" : s.role == .sub ? "_" : " "
+                let box = String(format: "x %.0f–%.0f  y %.0f–%.0f  h %.0f", s.x, s.right, s.top, s.bottom, s.height)
+                let top3 = s.guesses.prefix(3).map { "\($0.label) \(String(format: "%.2f", $0.score))" }
+                print("  \(role) \(s.label.padding(toLength: 8, withPad: " ", startingAt: 0)) \(box)   [\(top3.joined(separator: ", "))]")
+            }
         }
     }
 
@@ -135,7 +139,9 @@ final class NoteModel {
         let guesses = results(for: strokes)
         symbols[index].guesses = Array(guesses.prefix(5))
         symbols[index].label = guesses.first?.label ?? "?"
-        symbols[index].x = xRange(strokes).min
+        let xs = xRange(strokes)
+        symbols[index].x = xs.min
+        symbols[index].right = xs.max
         let ys = yRange(strokes)
         symbols[index].top = ys.min
         symbols[index].bottom = ys.max
@@ -175,9 +181,12 @@ final class NoteModel {
     /// same grouping and recognition as when they were first written.
     func replaceStrokes(_ strokes: [StrokeInfo]) {
         clearPage()
+        replaying = true                     // don't print the page after every stroke
         for stroke in strokes {
             strokeFinished(stroke.points, startTime: stroke.start, endTime: stroke.end)
         }
+        replaying = false
+        printLayout()
     }
 
     // MARK: - Grouping helpers
@@ -205,6 +214,18 @@ final class NoteModel {
             }
         }
         return (minY, maxY)
+    }
+
+    /// Do two sets of strokes share their vertical space? The shared stretch must be at
+    /// least half of the shorter one's height. True for the two lines of a "+" (the "-" is
+    /// inside the "|"'s height); false for the two lines of an "=", which sit one above
+    /// the other.
+    private func overlapsY(_ a: [[Point]], _ b: [[Point]]) -> Bool {
+        let ra = yRange(a)
+        let rb = yRange(b)
+        let shared = min(ra.max, rb.max) - max(ra.min, rb.min)
+        let shorter = min(ra.max - ra.min, rb.max - rb.min)
+        return shared >= 0 && shared >= 0.5 * shorter
     }
 
     private func overlapsX(_ a: [[Point]], _ b: [[Point]]) -> Bool {

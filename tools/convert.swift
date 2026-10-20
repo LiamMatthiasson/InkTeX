@@ -22,13 +22,14 @@ struct SymbolInfo {
 
 /// The symbols to include (as LaTeX, the same labels the app uses).
 /// Chosen for math notes. Left out on purpose: i j l o (too close to 1 and 0) and
-/// \Sigma (looks just like \sum). Not in the dataset at all, so they stay your own
+/// \Sigma (looks just like \sum), and \times
+/// (rarely handwritten, and it steals x). Not in the dataset at all, so they stay your own
 /// templates: = ( ) t
 let wanted: Set<String> = [
     // digits
     "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
     // operators and relations
-    "+", "-", "\\times", "\\div", "\\cdot", "\\pm", "<", ">", "\\leq", "\\geq", "\\neq", "\\approx",
+    "+", "-", "\\div", "\\cdot", "\\pm", "<", ">", "\\leq", "\\geq", "\\neq", "\\approx",
     // brackets and bars
     "[", "]", "\\{", "\\}", "|", "/",
     // letters
@@ -36,7 +37,7 @@ let wanted: Set<String> = [
     // Greek
     "\\alpha", "\\beta", "\\gamma", "\\delta", "\\theta", "\\lambda", "\\mu", "\\pi", "\\sigma", "\\phi", "\\omega", "\\Delta",
     // calculus and arrows
-    "\\int", "\\sum", "\\partial", "\\infty", "\\rightarrow", "\\Rightarrow",
+    "\\int", "\\oint", "\\sum", "\\prod", "\\partial", "\\infty", "\\rightarrow", "\\Rightarrow",
 ]
 
 /// How many examples of each symbol to keep. Measured on the dataset's test writers:

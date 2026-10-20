@@ -89,5 +89,66 @@ func runRecognizerChecks() {
     ]).map { $0.label }
     check("re-rank 3 s 5", sized == ["3", "s", "5"])
 
+    // Scripts, measured from your handwriting sample (screenshot pixels)
+    func box(_ label: String, _ left: Double, _ right: Double, _ top: Double, _ bottom: Double) -> Symbol {
+        Symbol(strokes: [], label: label, x: left, right: right, top: top, bottom: bottom,
+               guesses: [Match(label: label, score: 0.2)])
+    }
+    let x2 = [box("x", 135, 265, 300, 440), box("2", 285, 385, 195, 285)]
+    let e0 = [box("e", 615, 725, 280, 465), box("0", 765, 840, 385, 470)]
+    let integral = [box("\\int", 990, 1160, 185, 560), box("x", 1170, 1265, 330, 460),
+                    box("+", 1285, 1380, 325, 435), box("1", 1405, 1435, 320, 440)]
+    let esum = [box("e", 150, 280, 705, 870), box("s", 305, 385, 825, 895),
+                box("u", 390, 470, 820, 885), box("m", 500, 635, 815, 890)]
+    let twoX = [box("2", 0, 50, 100, 150), box("x", 60, 95, 120, 150)]
+
+    check("x^{2}", latex(for: applySpatialContext(x2)) == "x^{2}")
+    check("e_{0}", latex(for: applySpatialContext(e0)) == "e_{0}")
+    check("e_{s u m}", latex(for: applySpatialContext(esum)) == "e_{s u m}")
+    check("\\int x + 1 (x is not a limit)", latex(for: applySpatialContext(integral)) == "\\int x + 1")
+    check("2 x is not 2_{x}", latex(for: applySpatialContext(twoX)) == "2 x")
+
+    // The ² must join its x's line, not start a line of its own
+    let page = groupIntoLines(x2 + e0 + integral + esum)
+    check("2 lines on the sample page", page.count == 2)
+    check("first line reads x 2 e 0 ∫ x + 1", page.first?.map { $0.label } == ["x", "2", "e", "0", "\\int", "x", "+", "1"])
+    print("   " + page.map { latex(for: applySpatialContext($0)) }.joined(separator: "   |   "))
+
+    // ∑ with limits directly below (n = 1) and above (∞), then an x beside it
+    let sum = [box("\\sum", 100, 200, 100, 250), box("n", 90, 120, 260, 290),
+               box("\\infty", 120, 180, 60, 90), box("=", 125, 145, 270, 280),
+               box("1", 150, 165, 258, 292), box("x", 210, 260, 150, 210)]
+    check("\\sum_{n = 1}^{\\infty} x", latex(for: applySpatialContext(groupIntoLines(sum)[0])) == "\\sum_{n = 1}^{\\infty} x")
+    // ∫ with corner limits: 0 at the bottom right, 1 at the top right
+    let intLimits = [box("\\int", 100, 160, 100, 300), box("1", 165, 180, 95, 140),
+                     box("0", 160, 185, 265, 305), box("x", 200, 250, 180, 230)]
+    check("\\int_{0}^{1} x", latex(for: applySpatialContext(groupIntoLines(intLimits)[0])) == "\\int_{0}^{1} x")
+
+    // "=" must never start a script, even if a small letter is its runner-up guess
+    let yEquals = [box("y", 0, 40, 100, 170),
+                   Symbol(strokes: [], label: "=", x: 50, right: 80, top: 115, bottom: 130,
+                          guesses: [Match(label: "=", score: 0.5), Match(label: "z", score: 0.6)]),
+                   box("2", 90, 120, 95, 150)]
+    check("y = 2 (= is not an exponent)", latex(for: applySpatialContext(yEquals)) == "y = 2")
+    // (a+b)²: the ) is a base with a known size now
+    let paren = [box("(", 0, 15, 90, 160), box("a", 20, 50, 120, 150), box("+", 55, 80, 122, 145),
+                 box("b", 85, 110, 100, 150), box(")", 115, 130, 90, 160), box("2", 135, 160, 60, 95)]
+    check("( a + b )^{2}", latex(for: applySpatialContext(paren)) == "( a + b )^{2}")
+    // a lone | with 1 among its guesses is a 1
+    let lone = [box("x", 0, 30, 120, 150), box("=", 40, 70, 128, 140),
+                Symbol(strokes: [], label: "|", x: 80, right: 85, top: 100, bottom: 150,
+                       guesses: [Match(label: "|", score: 0.5), Match(label: "1", score: 0.7)])]
+    check("x = 1 (lone | becomes 1)", latex(for: applySpatialContext(lone)) == "x = 1")
+
+    // (a+b)² where the 2 is a near-tie with z: raised, so it's an exponent anyway
+    var parenZ = paren
+    parenZ[5] = Symbol(strokes: [], label: "z", x: 135, right: 160, top: 60, bottom: 95,
+                       guesses: [Match(label: "z", score: 1.05), Match(label: "2", score: 1.12)])
+    check("( a + b )^{z} (raised, even when read as z)", latex(for: applySpatialContext(parenZ)) == "( a + b )^{z}")
+
+    // a small "(" after f is f(x), not f_{(}  (your numbers from the iPad)
+    let fOfX = [box("f", 58, 66, 53, 67), box("(", 71, 73, 58, 67), box("x", 79, 85, 59, 67), box(")", 89, 92, 56, 67)]
+    check("f ( x )", latex(for: applySpatialContext(fOfX)) == "f ( x )")
+
     print("---------------------------")
 }
