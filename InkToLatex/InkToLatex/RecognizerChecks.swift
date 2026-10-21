@@ -161,12 +161,12 @@ func runRecognizerChecks() {
                         box("a", 105, 120, 100, 120), box("+", 122, 135, 103, 117), box("b", 138, 155, 92, 120),
                         box("-", 100, 160, 129, 131),
                         box("2", 120, 140, 140, 170)]
-    let fractionLines = groupIntoLines(combineFractions(fractionPage))
+    let fractionLines = groupIntoLines(combineStructures(fractionPage))
     check("fraction: one line", fractionLines.count == 1)
     check("x = \\frac{a + b}{2}", fractionLines.first.map { latex(for: applySpatialContext($0)) } == "x = \\frac{a + b}{2}")
     // ...but a minus with nothing above and below stays a minus
     let minusPage = [box("a", 0, 20, 110, 130), box("-", 25, 40, 119, 121), box("b", 45, 60, 100, 130)]
-    check("a - b is not a fraction", groupIntoLines(combineFractions(minusPage)).first.map { latex(for: applySpatialContext($0)) } == "a - b")
+    check("a - b is not a fraction", groupIntoLines(combineStructures(minusPage)).first.map { latex(for: applySpatialContext($0)) } == "a - b")
 
     // Words or math?
     func word(_ text: String, _ left: Double, _ right: Double, _ confidence: Float = 0.8) -> ReadWord {
@@ -191,6 +191,20 @@ func runRecognizerChecks() {
     check("cleanLabel _{0} → 0", cleanLabel("_{0}") == "0")
     check("cleanLabel ' ^{10} ' → 10", cleanLabel(" ^{10} ") == "10")
     check("cleanLabel leaves \\alpha alone", cleanLabel("\\alpha") == "\\alpha")
+
+    // Square roots: what's under the hood goes inside, a small symbol in the crook is the index
+    func readPage(_ page: [Symbol]) -> String {
+        groupIntoLines(combineStructures(page)).map { latex(for: applySpatialContext($0)) }.joined(separator: " | ")
+    }
+    let root = box("\\sqrt", 10, 80, 100, 150)
+    let underRoot = [box("x", 35, 45, 120, 145), box("+", 48, 58, 125, 140), box("1", 62, 66, 118, 146)]
+    check("\\sqrt{x + 1}", readPage([root] + underRoot) == "\\sqrt{x + 1}")
+    check("\\sqrt[3]{x + 1}", readPage([root, box("3", 5, 15, 95, 112)] + underRoot) == "\\sqrt[3]{x + 1}")
+    check("a lone √ stays \\sqrt", readPage([root]) == "\\sqrt")
+    // a fraction under a root: the fraction is built first, then goes inside the root
+    let rootFraction = [box("\\sqrt", 0, 80, 90, 160), box("a", 40, 50, 100, 115),
+                        box("-", 35, 65, 120, 122), box("b", 40, 50, 127, 142)]
+    check("\\sqrt{\\frac{a}{b}}", readPage(rootFraction) == "\\sqrt{\\frac{a}{b}}")
 
     print("---------------------------")
 }

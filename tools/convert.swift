@@ -38,6 +38,26 @@ let wanted: Set<String> = [
     "\\alpha", "\\beta", "\\gamma", "\\delta", "\\theta", "\\lambda", "\\mu", "\\pi", "\\sigma", "\\phi", "\\omega", "\\Delta",
     // calculus and arrows
     "\\int", "\\oint", "\\sum", "\\prod", "\\partial", "\\infty", "\\rightarrow", "\\Rightarrow",
+    // roots and primes
+    "\\sqrt{}", "\\prime",
+    // capital letters that don't look like a lowercase letter or digit
+    // (C O S U V W X Z, I J K P Y are left out: c 0 5 u v w x z, 1 j k p y)
+    "A", "B", "D", "E", "F", "G", "H", "L", "M", "N", "Q", "R", "T",
+    // more Greek
+    "\\varepsilon", "\\tau", "\\psi", "\\xi", "\\Gamma", "\\Theta", "\\Pi", "\\Phi", "\\Omega",
+    // sets and logic
+    "\\in", "\\notin", "\\subset", "\\subseteq", "\\cup", "\\cap", "\\emptyset", "\\forall", "\\exists",
+    "\\nabla", "\\equiv", "\\perp", "\\angle", "\\therefore", "\\mapsto", "\\Leftrightarrow",
+    // number sets (the dataset's \\mathds is the same blackboard bold as \\mathbb)
+    "\\mathds{R}", "\\mathds{N}", "\\mathds{Z}", "\\mathds{Q}", "\\mathds{C}",
+]
+
+/// Dataset names → the LaTeX the app should write.
+let rename: [String: String] = [
+    "\\sqrt{}": "\\sqrt",            // the app adds the {…} around what's under it
+    "\\prime": "'",                    // f'(x) is written with an apostrophe
+    "\\mathds{R}": "\\mathbb{R}", "\\mathds{N}": "\\mathbb{N}", "\\mathds{Z}": "\\mathbb{Z}",
+    "\\mathds{Q}": "\\mathbb{Q}", "\\mathds{C}": "\\mathbb{C}",   // \\mathbb is in amssymb
 ]
 
 /// How many examples of each symbol to keep. Measured on the dataset's test writers:
@@ -105,7 +125,7 @@ struct OutTemplate: Encodable { let label: String; let strokes: [[OutPoint]] }
 
 // Which ids we want, and what label each one gets (from step 1's dictionary)
 var labelForID: [Int: String] = [:]
-for info in batch { labelForID[info.id] = info.latex }
+for info in batch { labelForID[info.id] = rename[info.latex] ?? info.latex }
 
 var templates: [OutTemplate] = []
 var countPerLabel: [String: Int] = [:]          // how many we've kept of each symbol

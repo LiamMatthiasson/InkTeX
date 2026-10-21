@@ -2,6 +2,7 @@
 // The built-in starters aren't listed.
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct IndexedTemplate: Identifiable {
     let index: Int            // position in model.templates
@@ -20,6 +21,8 @@ struct TemplatesView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var renaming: IndexedTemplate?
     @State private var newLabel = ""
+    @State private var importing = false              // the Files picker is open
+    @State private var importMessage: String?         // what the last import did
 
     private var groups: [TemplateGroup] {
         let indexed = model.templates.enumerated().map { IndexedTemplate(index: $0.offset, template: $0.element) }
@@ -30,6 +33,10 @@ struct TemplatesView: View {
     var body: some View {
         NavigationStack {
             List {
+                if let importMessage {
+                    Text(importMessage)
+                        .foregroundStyle(Color.padGreen)
+                }
                 if model.templates.isEmpty {
                     Text("Nothing taught yet. Write a symbol, type what it is, and tap Teach, or tap a symbol in the LaTeX panel to correct it.")
                         .foregroundStyle(Color.muted)
@@ -58,7 +65,35 @@ struct TemplatesView: View {
             .navigationTitle("Your templates (\(model.templates.count))")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                Button("Done") { dismiss() }
+                ToolbarItemGroup(placement: .topBarLeading) {
+                    // Back up your templates: save the file to Files, AirDrop it, email it…
+                    ShareLink(item: TemplatesFile(data: model.templatesBackup()),
+                              preview: SharePreview("InkTeX templates.json")) {
+                        Label("Export", systemImage: "square.and.arrow.up")
+                    }
+                    .disabled(model.templates.isEmpty)
+
+                    // …and bring a backup back (after reinstalling, or on another iPad)
+                    Button {
+                        importing = true
+                    } label: {
+                        Label("Import", systemImage: "square.and.arrow.down")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
+                guard case .success(let url) = result else { return }
+                // Files from the Files app are outside our sandbox: ask for access first
+                let allowed = url.startAccessingSecurityScopedResource()
+                defer { if allowed { url.stopAccessingSecurityScopedResource() } }
+                if let data = try? Data(contentsOf: url) {
+                    importMessage = model.importTemplates(from: data)
+                } else {
+                    importMessage = "Couldn't read that file"
+                }
             }
             .alert("Change label", isPresented: Binding(
                 get: { renaming != nil },

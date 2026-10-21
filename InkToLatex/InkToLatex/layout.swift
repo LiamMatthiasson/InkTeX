@@ -24,15 +24,20 @@ func median(_ values: [Double]) -> Double {
 
 // MARK: - Which symbols are which
 
-let descenders: Set<String> = ["g", "y", "p", "q", "j", "\\mu", "\\beta", "\\phi"]
+let descenders: Set<String> = ["g", "y", "p", "q", "j", "\\mu", "\\beta", "\\phi", "\\psi", "\\xi"]
 /// Their bottoms say nothing about where the line is
-let floaters: Set<String> = ["-", "=", "\\cdot", "\\approx", "\\sim", "+", "\\times", "\\div", "\\pm"]
+let floaters: Set<String> = ["-", "=", "\\cdot", "\\approx", "\\sim", "+", "\\times", "\\div", "\\pm",
+                             "\\equiv", "\\rightarrow", "\\Rightarrow", "\\Leftrightarrow", "\\mapsto"]
 /// About half as tall as a digit
 let smallLetters: Set<String> = ["a", "c", "e", "m", "n", "o", "r", "s", "u", "v", "w", "x", "z",
-                                 "\\alpha", "\\omega", "\\sigma", "\\pi"]
+                                 "\\alpha", "\\omega", "\\sigma", "\\pi", "\\varepsilon", "\\tau"]
 let tinySymbols: Set<String> = ["\\cdot", "."]
 let tallSymbols: Set<String> = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
-                                "b", "d", "f", "h", "k", "\\delta", "\\theta", "\\lambda"]
+                                "b", "d", "f", "h", "k", "\\delta", "\\theta", "\\lambda",
+                                "A", "B", "D", "E", "F", "G", "H", "L", "M", "N", "Q", "R", "T",
+                                "\\Gamma", "\\Delta", "\\Theta", "\\Pi", "\\Phi", "\\Omega",
+                                "\\mathbb{R}", "\\mathbb{N}", "\\mathbb{Z}", "\\mathbb{Q}", "\\mathbb{C}",
+                                "\\forall", "\\exists"]
 
 // MARK: - Measuring a line
 
@@ -198,60 +203,125 @@ func groupIntoLines(_ symbols: [Symbol]) -> [[Symbol]] {
                 .map { band in band.symbols.sorted { $0.x < $1.x } }
 }
 
-// MARK: - Fractions
+// MARK: - Fractions and square roots
 //
-// A wide "-" with symbols right above AND below. Found on the whole page before line
-// grouping (which would split it into three lines) and combined into one Symbol
-// labelled \frac{…}{…}.
+// Both are CONTAINERS: other symbols belong to them by position, not by reading order.
+//   fraction: a wide "-" with symbols right above AND below → \frac{above}{below}
+//   root:     a √ with symbols under its hood → \sqrt{under}, and a small symbol in the
+//             crook of its tick → the index: \sqrt[3]{x}
+// Found on the whole page before line grouping (which would split a fraction into three
+// lines), and combined into one tall Symbol whose `children` are its pieces.
 
-/// Shortest bars first, so nested fractions are built inside out.
-func combineFractions(_ symbols: [Symbol]) -> [Symbol] {
-    guard symbols.count >= 3 else { return symbols }
+/// Narrowest containers first, so nested ones are built inside out:
+/// \sqrt{\frac{a}{b}} and \frac{\sqrt{x}}{2} both work.
+func combineStructures(_ symbols: [Symbol]) -> [Symbol] {
+    guard symbols.count >= 2 else { return symbols }
     let typical = median(symbols.map { $0.height })
     var remaining = symbols
 
-    let bars = symbols
-        .filter { isFractionBar($0, typical: typical) }
+    let containers = symbols
+        .filter { isFractionBar($0, typical: typical) || isRadical($0) }
         .sorted { ($0.right - $0.x) < ($1.right - $1.x) }
 
-    for bar in bars {
-        guard remaining.contains(where: { $0.id == bar.id }) else { continue }
-        let barY = bar.centerY
-        let slack = 0.1 * (bar.right - bar.x)
-        let others = remaining.filter { $0.id != bar.id }
+    for container in containers {
+        guard remaining.contains(where: { $0.id == container.id }) else { continue }
+        let others = remaining.filter { $0.id != container.id }
 
-        func overBar(_ s: Symbol) -> Bool {
-            let centerX = (s.x + s.right) / 2
-            return centerX > bar.x - slack && centerX < bar.right + slack
-        }
+        let found = isRadical(container)
+            ? makeRoot(container, from: others)
+            : makeFraction(container, from: others, typical: typical)
+        guard let found else { continue }          // nothing inside it: leave it alone
 
-        var above = others.filter { overBar($0) && $0.bottom <= barY + 0.15 * typical
-                                                 && $0.bottom >= barY - 0.8 * typical }
-        var below = others.filter { overBar($0) && $0.top >= barY - 0.15 * typical
-                                                 && $0.top <= barY + 0.8 * typical }
-        guard !above.isEmpty, !below.isEmpty else { continue }   // a plain minus
-
-        // Plus whatever shares their row (the ² of an x² in the numerator)
-        above += sameRow(as: above, from: others, typical: typical) { overBar($0) && $0.bottom <= barY }
-        below += sameRow(as: below, from: others, typical: typical) { overBar($0) && $0.top >= barY }
-
-        let numerator = latex(for: applySpatialContext(above.sorted { $0.x < $1.x }))
-        let denominator = latex(for: applySpatialContext(below.sorted { $0.x < $1.x }))
-        let parts = above + [bar] + below
-        let used = Set(parts.map { $0.id })
-
-        let fraction = Symbol(
-            strokes: parts.flatMap { $0.strokes },
-            label: "\\frac{\(numerator)}{\(denominator)}",
-            x: parts.map { $0.x }.min()!,
-            right: parts.map { $0.right }.max()!,
-            top: parts.map { $0.top }.min()!,
-            bottom: parts.map { $0.bottom }.max()!,
-            children: parts.flatMap { $0.children.isEmpty ? [$0] : $0.children }
-        )
-        remaining = remaining.filter { !used.contains($0.id) } + [fraction]
+        // Remove exactly the symbols it was made from (an inner fraction is ONE symbol
+        // here, with its own id), and add the combined one.
+        let used = Set(found.parts.map { $0.id })
+        remaining = remaining.filter { !used.contains($0.id) } + [composite(found.parts, label: found.label)]
     }
     return remaining
+}
+
+/// One symbol made of several: its box covers all of them.
+func composite(_ parts: [Symbol], label: String) -> Symbol {
+    Symbol(
+        strokes: parts.flatMap { $0.strokes },
+        label: label,
+        x: parts.map { $0.x }.min()!,
+        right: parts.map { $0.right }.max()!,
+        top: parts.map { $0.top }.min()!,
+        bottom: parts.map { $0.bottom }.max()!,
+        children: parts.flatMap { $0.children.isEmpty ? [$0] : $0.children }
+    )
+}
+
+/// A container's pieces (the container included) and the LaTeX for all of them together.
+struct Structure {
+    let parts: [Symbol]
+    let label: String
+}
+
+/// A bar with symbols right above and below it → \frac{…}{…}; nil if it's a plain minus.
+func makeFraction(_ bar: Symbol, from others: [Symbol], typical: Double) -> Structure? {
+    let barY = bar.centerY
+    let slack = 0.1 * (bar.right - bar.x)
+
+    func overBar(_ s: Symbol) -> Bool {
+        let centerX = (s.x + s.right) / 2
+        return centerX > bar.x - slack && centerX < bar.right + slack
+    }
+
+    var above = others.filter { overBar($0) && $0.bottom <= barY + 0.15 * typical
+                                             && $0.bottom >= barY - 0.8 * typical }
+    var below = others.filter { overBar($0) && $0.top >= barY - 0.15 * typical
+                                             && $0.top <= barY + 0.8 * typical }
+    guard !above.isEmpty, !below.isEmpty else { return nil }   // a plain minus
+
+    // Plus whatever shares their row (the ² of an x² in the numerator)
+    above += sameRow(as: above, from: others, typical: typical) { overBar($0) && $0.bottom <= barY }
+    below += sameRow(as: below, from: others, typical: typical) { overBar($0) && $0.top >= barY }
+
+    let numerator = latex(for: applySpatialContext(above.sorted { $0.x < $1.x }))
+    let denominator = latex(for: applySpatialContext(below.sorted { $0.x < $1.x }))
+    return Structure(parts: above + [bar] + below, label: "\\frac{\(numerator)}{\(denominator)}")
+}
+
+/// A √ with symbols under its hood → \sqrt{…} (or \sqrt[n]{…}); nil if nothing's under it
+/// yet (then it stays a plain \sqrt, and LaTeX applies it to whatever comes next).
+///
+///      n ┌──────────        the hood: the top bar, from the tick to the right end
+///      \/  x + 1            under it: middle inside the √'s height, right of the tick
+///      ↑
+///      the tick: the left quarter; a small symbol in its crook is the index
+func makeRoot(_ root: Symbol, from others: [Symbol]) -> Structure? {
+    let width = root.right - root.x
+    let tickEnd = root.x + 0.25 * width
+
+    let under = others.filter { s in
+        let centerX = (s.x + s.right) / 2
+        return centerX > tickEnd && centerX < root.right + 0.1 * width
+            && s.centerY > root.top && s.centerY < root.bottom
+            && s.height < 0.95 * root.height                // fits under the hood
+    }
+    guard !under.isEmpty else { return nil }
+    let underIDs = Set(under.map { $0.id })
+
+    // The index: small, its middle near the tick, sitting in the upper part of the √
+    let index = others.filter { s in
+        let centerX = (s.x + s.right) / 2
+        return !underIDs.contains(s.id)
+            && centerX > root.x - 0.3 * width && centerX < root.x + 0.35 * width
+            && s.centerY > root.top - 0.1 * root.height
+            && s.bottom <= root.top + 0.6 * root.height
+            && s.height < 0.5 * root.height
+    }
+
+    let inside = latex(for: applySpatialContext(under.sorted { $0.x < $1.x }))
+    let degree = index.isEmpty ? "" : "[" + latex(for: applySpatialContext(index.sorted { $0.x < $1.x })) + "]"
+    return Structure(parts: [root] + index + under, label: "\\sqrt\(degree){\(inside)}")
+}
+
+/// A square root symbol that isn't already part of something.
+func isRadical(_ symbol: Symbol) -> Bool {
+    symbol.label == "\\sqrt" && symbol.children.isEmpty
 }
 
 /// A "-" at least 60% as wide as a typical symbol is tall.

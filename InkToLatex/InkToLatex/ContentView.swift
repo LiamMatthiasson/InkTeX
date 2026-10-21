@@ -280,6 +280,14 @@ struct ContentView: View {
                     }
                 }
                 .buttonStyle(OutlineButtonStyle(compact: true))
+
+                // Export the note as a .tex file: AirDrop, Files, Mail, upload to Overleaf…
+                ShareLink(item: TexFile(name: fileName(for: currentNoteTitle), text: model.document),
+                          preview: SharePreview("\(fileName(for: currentNoteTitle)).tex")) {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(OutlineButtonStyle(compact: true))
+                .disabled(model.docBlocks.isEmpty)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -463,6 +471,11 @@ struct ContentView: View {
             }
         }
         .frame(width: 360, height: 480)
+    }
+
+    /// The open note's title (for the exported file's name).
+    private var currentNoteTitle: String {
+        store.notes.first { $0.id == currentNote }?.title ?? "Note"
     }
 
     private var currentTitle: Binding<String> {

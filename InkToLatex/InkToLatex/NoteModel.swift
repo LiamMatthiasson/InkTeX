@@ -66,7 +66,7 @@ final class NoteModel {
     /// applied. Symbols not recognized yet are left out.
     var lines: [[Symbol]] {
         let ready = symbols.filter { !$0.label.isEmpty }
-        return groupIntoLines(combineFractions(ready)).map { applySpatialContext($0) }
+        return groupIntoLines(combineStructures(ready)).map { applySpatialContext($0) }
     }
 
     /// Lines with words become paragraphs (close lines merge); the rest become display
@@ -237,7 +237,8 @@ final class NoteModel {
         if let last = symbols.indices.last,
            quick || overlapsY(symbols[last].strokes, [points]),
            overlapsX(symbols[last].strokes, [points]),
-           !isFractionBarPair(symbols[last].strokes, [points]) {
+           !isFractionBarPair(symbols[last].strokes, [points]),
+           !isUnderRoot(points, symbols[last]) {
             let together = await results(for: symbols[last].strokes + [points]).first
             guard gen == generation else { return }
             if let together, together.score < joinScoreLimit {
@@ -253,7 +254,7 @@ final class NoteModel {
             let together = await results(for: prev + [points]).first
             guard gen == generation else { return }
             let togetherText = together.map { "\($0.label) \(String(format: "%.2f", $0.score))" } ?? "-"
-            print("  new symbol: quick \(quick), sharesHeight \(overlapsY(prev, [points])), overlapsX \(overlapsX(prev, [points])), bar \(isFractionBarPair(prev, [points])), together \(togetherText) (joins below \(joinScoreLimit))")
+            print("  new symbol: quick \(quick), sharesHeight \(overlapsY(prev, [points])), overlapsX \(overlapsX(prev, [points])), bar \(isFractionBarPair(prev, [points])), underRoot \(isUnderRoot(points, symbols[last])), together \(togetherText) (joins below \(joinScoreLimit))")
         }
         symbols.append(Symbol(strokes: [points], label: "", x: 0))
         await relabel(symbols.count - 1, generation: gen)
@@ -396,6 +397,26 @@ final class NoteModel {
     }
 
     /// Shared width is at least `minOverlap` of the narrower one's (thin lines count as 6 pt).
+    /// A stroke written under the hood of a √ (or in the crook of its tick, as an index)
+    /// is the start of something new, never part of the √ itself: together they might
+    /// even look like some other symbol. Under = middle inside the √'s box, right of the
+    /// tick, and the √ much wider than the stroke.
+    private func isUnderRoot(_ stroke: [Point], _ symbol: Symbol) -> Bool {
+        guard symbol.label == "\\sqrt" else { return false }
+        let xs = xRange([stroke]), ys = yRange([stroke])
+        let width = symbol.right - symbol.x
+        let centerX = (xs.min + xs.max) / 2
+        let centerY = (ys.min + ys.max) / 2
+        let under = centerX > symbol.x + 0.25 * width && centerX < symbol.right + 0.1 * width
+            && centerY > symbol.top && centerY < symbol.bottom
+            && width >= 1.5 * (xs.max - xs.min)
+        // ...or small, in the crook of the tick: the index of a cube root (∛)
+        let index = centerX < symbol.x + 0.35 * width
+            && centerY < symbol.top + 0.6 * symbol.height
+            && max(xs.max - xs.min, ys.max - ys.min) < 0.5 * symbol.height
+        return under || index
+    }
+
     private func overlapsX(_ a: [[Point]], _ b: [[Point]]) -> Bool {
         let ra = xRange(a)
         let rb = xRange(b)
@@ -481,6 +502,44 @@ final class NoteModel {
                 await relabel(i, generation: gen)
             }
         }
+    }
+
+    // MARK: - Backing up templates
+
+    /// Your templates as the contents of a .json file (same format as templates.json).
+    func templatesBackup() -> Data {
+        (try? JSONEncoder().encode(templates)) ?? Data("[]".utf8)
+    }
+
+    /// Adds the templates from a backup file. Labels are cleaned (no ^ or _), and ones
+    /// you already have (same label, same ink) are skipped, so importing twice is safe.
+    /// Returns what happened, for the screen.
+    @discardableResult
+    func importTemplates(from data: Data) -> String {
+        guard let incoming = try? JSONDecoder().decode([Template].self, from: data) else {
+            status = "That file isn't a templates backup"
+            return status
+        }
+        var known = Set(templates.map { $0.label + "|" + cacheKey($0.strokes) })
+        var added = 0
+        for var template in incoming {
+            template.label = cleanLabel(template.label)
+            let key = template.label + "|" + cacheKey(template.strokes)
+            guard !template.label.isEmpty, !template.strokes.isEmpty, !known.contains(key) else { continue }
+            known.insert(key)
+            templates.append(template)
+            prepared.append(PreparedTemplate(template))   // yours always go after the starters
+            added += 1
+        }
+        if added > 0 {
+            recognitionCache.removeAll()
+            persistTemplates()
+            rereadPage()
+        }
+        let skipped = incoming.count - added
+        status = "Imported \(added) template\(added == 1 ? "" : "s")"
+            + (skipped > 0 ? " (\(skipped) skipped: already here or empty)" : "")
+        return status
     }
 
     // MARK: - Saving to disk

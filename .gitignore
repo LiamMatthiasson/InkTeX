@@ -16,3 +16,4 @@ build/
 
 # The HWRT handwriting dataset (about 140 MB; download it yourself, see tools/convert.swift)
 tools/hwrt/
+CLAUDE.md
